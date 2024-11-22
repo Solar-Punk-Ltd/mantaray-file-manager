@@ -1,0 +1,21 @@
+{
+  "name": "mantaray",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@ethersphere/bee-js": "^8.3.1",
+    "mantaray-js": "^1.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.1",
+    "typescript": "^5.6.3"
+  }
+}
