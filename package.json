@@ -1,21 +1,16 @@
 {
-  "name": "mantaray",
+  "name": "mantaray-file-manager",
   "version": "1.0.0",
-  "main": "index.js",
+  "description": "A file manager for uploading and managing files on Swarm using Mantaray.",
+  "main": "src/fileManager.js",
   "scripts": {
-    "build": "tsc",
-    "start": "node dist/index.js"
+    "test": "node test.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
+  "keywords": ["swarm", "mantaray", "file-manager"],
+  "author": "Nidish Ramakrishnan",
+  "license": "MIT",
   "dependencies": {
     "@ethersphere/bee-js": "^8.3.1",
     "mantaray-js": "^1.0.3"
-  },
-  "devDependencies": {
-    "@types/node": "^22.9.1",
-    "typescript": "^5.6.3"
   }
 }
