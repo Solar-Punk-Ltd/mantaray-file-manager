@@ -25,4 +25,12 @@ function hexStringToReference(reference) {
   return bytes;
 }
 
-module.exports = { getContentType, pathToBytes, hexStringToReference };
+function encodePathToBytes(pathString) {
+  return new TextEncoder().encode(pathString);
+}
+
+function decodeBytesToPath(bytes) {
+  return new TextDecoder().decode(bytes);
+}
+
+module.exports = { getContentType, pathToBytes, hexStringToReference, encodePathToBytes, decodeBytesToPath };

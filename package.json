@@ -4,13 +4,35 @@
   "description": "A file manager for uploading and managing files on Swarm using Mantaray.",
   "main": "src/fileManager.js",
   "scripts": {
-    "test": "node test.js"
+    "test": "jest",
+    "start": "node index.js",
+    "lint": "eslint .",
+    "prepare": "npm run lint"
   },
-  "keywords": ["swarm", "mantaray", "file-manager"],
+  "keywords": [
+    "swarm",
+    "mantaray",
+    "file-manager",
+    "bee-js",
+    "javascript"
+  ],
   "author": "Nidish Ramakrishnan",
   "license": "MIT",
   "dependencies": {
     "@ethersphere/bee-js": "^8.3.1",
     "mantaray-js": "^1.0.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^8.57.1",
+    "eslint": "^8.57.1",
+    "eslint-plugin-jest": "^27.2.2",
+    "eslint-plugin-node": "^11.1.0",
+    "jest": "^29.7.0"
+  },
+  "jest": {
+    "testEnvironment": "node"
+  },
+  "engines": {
+    "node": ">=14"
   }
 }
