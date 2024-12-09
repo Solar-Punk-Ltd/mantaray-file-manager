@@ -33,45 +33,62 @@ describe('FileManager', () => {
   it('should upload a file and return its reference', async () => {
     const fileManager = new FileManager('http://localhost:1633');
     fileManager.bee = mockBee;
-
+  
     const mantaray = createMockMantarayNode();
     const mockFilePath = 'nested-dir/file1.txt';
-    const result = await fileManager.uploadFile(mockFilePath, mantaray, 'test-stamp');
-
-    expect(result).toBe('a'.repeat(64)); // Valid 64-character hex string
-    expect(mockBee.uploadFile).toHaveBeenCalledWith('test-stamp', expect.any(Buffer), 'file1.txt');
-  });
+    const result = await fileManager.uploadFile(mockFilePath, mantaray, 'test-stamp', {}, '1');
+  
+    expect(result).toBe('b'.repeat(64)); // Valid 64-character hex string
+    expect(mockBee.uploadFile).toHaveBeenCalledWith(
+      'test-stamp',
+      expect.any(Buffer),
+      'file1.txt',
+      {
+        contentType: 'text/plain',
+        headers: { 'swarm-redundancy-level': '1' },
+      }
+    );
+  });  
 
   it('should add a file to the Mantaray node', () => {
     const fileManager = new FileManager('http://localhost:1633');
     const mantaray = createMockMantarayNode();
-
+  
     fileManager.addToMantaray(mantaray, 'a'.repeat(64), { Filename: '1.txt' });
-
+  
     expect(mantaray.addFork).toHaveBeenCalledWith(
       encodePathToBytes('1.txt'),
-      expect.any(Uint8Array)
+      expect.any(Uint8Array),
+      expect.objectContaining({ Filename: '1.txt' })
     );
-  });
+  });  
 
   it('should save a Mantaray node and return its reference', async () => {
     const fileManager = new FileManager('http://localhost:1633');
     fileManager.bee = mockBee;
-
+  
     const mantaray = createMockMantarayNode();
     const result = await fileManager.saveMantaray(mantaray, 'test-stamp');
-
+  
     expect(result).toBe('b'.repeat(64)); // Valid 64-character hex string
-    expect(mockBee.uploadData).toHaveBeenCalledTimes(1);
-    expect(mockBee.uploadData).toHaveBeenCalledWith('test-stamp', expect.any(Uint8Array));
-  });
+    expect(mockBee.uploadFile).toHaveBeenCalledTimes(1);
+    expect(mockBee.uploadFile).toHaveBeenCalledWith(
+      'test-stamp',
+      expect.any(Uint8Array),
+      'manifest',
+      { contentType: 'application/json' } // Correct headers for Mantaray save
+    );
+  });  
 
   it('should list files correctly in Mantaray', () => {
     const fileManager = new FileManager('http://localhost:1633');
     const mantaray = createMockMantarayNode();
   
     const files = fileManager.listFiles(mantaray);
-    expect(files).toEqual(['file/1.txt', 'file/2.txt']); // Correct expectation
+    expect(files).toEqual([
+      { path: 'file/1.txt' },
+      { path: 'file/2.txt' },
+    ]); // Correct expectation
   });
   
   it('should download a specific file by path', async () => {
@@ -81,9 +98,9 @@ describe('FileManager', () => {
     const mantaray = createMockMantarayNode();
     const content = await fileManager.downloadFile(mantaray, 'file/1.txt');
   
-    expect(content).toBe('Mock content for aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+    expect(content.data).toBe('Mock content for aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
     expect(mockBee.downloadFile).toHaveBeenCalledWith('a'.repeat(64));
-  });
+  });  
   
   it('should handle nested paths correctly in listFiles', () => {
     const fileManager = new FileManager('http://localhost:1633');
@@ -108,8 +125,8 @@ describe('FileManager', () => {
     const mantaray = createMockMantarayNode(customForks);
     const files = fileManager.listFiles(mantaray);
   
-    expect(files).toEqual(['nested/file.txt']); // Correct expectation
-  });  
+    expect(files).toEqual([{ path: 'nested/file.txt' }]); // Correct expectation
+  });   
 
   it('should download all files from Mantaray', async () => {
     const fileManager = new FileManager('http://localhost:1633');
@@ -125,11 +142,11 @@ describe('FileManager', () => {
   it('should handle missing files gracefully', async () => {
     const fileManager = new FileManager('http://localhost:1633');
     const mantaray = createMockMantarayNode();
-
+  
     await expect(fileManager.downloadFile(mantaray, 'file/3.txt')).rejects.toThrow(
-      'File not found in Mantaray: file/3.txt'
+      'Path segment not found: 3.txt'
     );
-  });
+  });  
 
   it('should handle missing forks gracefully in listFiles', () => {
     const fileManager = new FileManager('http://localhost:1633');
@@ -155,7 +172,7 @@ describe('FileManager', () => {
     fileManager.bee = mockBee;
 
     const mantaray = createMockMantarayNode();
-    jest.spyOn(mockBee, 'uploadData').mockRejectedValueOnce(new Error('Upload failed'));
+    jest.spyOn(mockBee, 'uploadFile').mockRejectedValueOnce(new Error('Upload failed'));
 
     await expect(fileManager.saveMantaray(mantaray, 'test-stamp')).rejects.toThrow('Upload failed');
   });
@@ -177,21 +194,24 @@ describe('FileManager', () => {
   
     mantaray.forks.file.prefix = undefined; // Simulate undefined prefix
     const files = fileManager.listFiles(mantaray);
-    expect(files).toEqual(['1.txt', '2.txt']); // Ensure paths are correctly handled
+    expect(files).toEqual([
+      { path: '1.txt' },
+      { path: '2.txt' },
+    ]); // Ensure paths are correctly handled
   });
-
   
   it('should add a file to the Mantaray node with default filename', () => {
     const fileManager = new FileManager('http://localhost:1633');
     const mantaray = createMockMantarayNode();
-
+  
     fileManager.addToMantaray(mantaray, 'a'.repeat(64), {}); // No Filename in metadata
-
+  
     expect(mantaray.addFork).toHaveBeenCalledWith(
       encodePathToBytes('file'),
-      expect.any(Uint8Array)
+      expect.any(Uint8Array),
+      expect.objectContaining({ Filename: 'file' })
     );
-  });
+  });  
   
   it('should handle the case where a path does not point to a file in downloadFile', async () => {
     const fileManager = new FileManager('http://localhost:1633');
@@ -222,4 +242,164 @@ describe('FileManager', () => {
     await expect(fileManager.downloadFiles(mantaray)).resolves.toBeUndefined();
     expect(mockBee.downloadFile).toHaveBeenCalled();
   });
+
+  it('should add metadata to Mantaray for uploaded files', async () => {
+    const fileManager = new FileManager('http://localhost:1633');
+    fileManager.bee = mockBee;
+  
+    const mantaray = createMockMantarayNode();
+    const mockFilePath = 'nested-dir/file1.txt';
+    const customMetadata = { description: 'Test description', tags: ['test'] };
+  
+    await fileManager.uploadFile(mockFilePath, mantaray, 'test-stamp', customMetadata, '2');
+  
+    expect(mantaray.addFork).toHaveBeenCalledWith(
+      encodePathToBytes('file1.txt'),
+      expect.any(Uint8Array),
+      expect.objectContaining({
+        'Filename': 'file1.txt',
+        'Content-Type': 'text/plain',
+        'Custom-Metadata': JSON.stringify(customMetadata),
+      })
+    );
+  });
+
+  it('should use default metadata when custom metadata is not provided', async () => {
+    const fileManager = new FileManager('http://localhost:1633');
+    fileManager.bee = mockBee;
+  
+    const mantaray = createMockMantarayNode();
+    const mockFilePath = 'nested-dir/file2.txt';
+  
+    await fileManager.uploadFile(mockFilePath, mantaray, 'test-stamp');
+  
+    expect(mantaray.addFork).toHaveBeenCalledWith(
+      encodePathToBytes('file2.txt'),
+      expect.any(Uint8Array),
+      expect.objectContaining({
+        'Filename': 'file2.txt',
+        'Content-Type': 'text/plain',
+        'Custom-Metadata': JSON.stringify({}),
+      })
+    );
+  });
+
+  it('should list files with metadata', () => {
+    const fileManager = new FileManager('http://localhost:1633');
+    const mantaray = createMockMantarayNode();
+  
+    const files = fileManager.listFiles(mantaray, '', true);
+  
+    expect(files).toEqual([
+      {
+        path: 'file/1.txt',
+        metadata: {
+          'Filename': '1.txt',
+          'Content-Type': 'text/plain',
+        },
+      },
+      {
+        path: 'file/2.txt',
+        metadata: {
+          'Filename': '2.txt',
+          'Content-Type': 'text/plain',
+        },
+      },
+    ]);
+  });  
+
+  it('should return metadata with file data during download', async () => {
+    const fileManager = new FileManager('http://localhost:1633');
+    fileManager.bee = mockBee;
+  
+    const mantaray = createMockMantarayNode();
+    const result = await fileManager.downloadFile(mantaray, 'file/1.txt');
+  
+    expect(result).toEqual({
+      data: 'Mock content for aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      metadata: {
+        'Filename': '1.txt',
+        'Content-Type': 'text/plain',
+      },
+    });
+  });
+
+  it('should list files with metadata in custom forks', () => {
+    const fileManager = new FileManager('http://localhost:1633');
+    const customForks = {
+      custom: {
+        prefix: encodePathToBytes('custom'),
+        node: {
+          forks: {
+            'file3.txt': {
+              prefix: encodePathToBytes('file3.txt'),
+              node: {
+                isValueType: () => true,
+                getEntry: new Uint8Array(Buffer.from('c'.repeat(64), 'hex')),
+                metadata: {
+                  'Filename': 'file3.txt',
+                  'Content-Type': 'application/json',
+                },
+              },
+            },
+          },
+          isValueType: () => false,
+        },
+      },
+    };
+  
+    const mantaray = createMockMantarayNode(customForks);
+    const files = fileManager.listFiles(mantaray, '', true);
+  
+    expect(files).toEqual([
+      {
+        path: 'custom/file3.txt',
+        metadata: {
+          'Filename': 'file3.txt',
+          'Content-Type': 'application/json',
+        },
+      },
+    ]);
+  });
+
+  it('should ensure metadata is not duplicated in listFiles', () => {
+    const fileManager = new FileManager('http://localhost:1633');
+    const mantaray = createMockMantarayNode();
+  
+    const files = fileManager.listFiles(mantaray, '', true);
+  
+    expect(files).toEqual([
+      {
+        path: 'file/1.txt',
+        metadata: {
+          'Filename': '1.txt',
+          'Content-Type': 'text/plain',
+        },
+      },
+      {
+        path: 'file/2.txt',
+        metadata: {
+          'Filename': '2.txt',
+          'Content-Type': 'text/plain',
+        },
+      },
+    ]);
+  });  
+  
+  it('should ensure metadata is preserved during addToMantaray', () => {
+    const fileManager = new FileManager('http://localhost:1633');
+    const mantaray = createMockMantarayNode();
+  
+    const customMetadata = { 'Author': 'Test Author' };
+    fileManager.addToMantaray(mantaray, 'a'.repeat(64), customMetadata);
+  
+    expect(mantaray.addFork).toHaveBeenCalledWith(
+      encodePathToBytes('file'),
+      expect.any(Uint8Array),
+      expect.objectContaining({
+        'Author': 'Test Author',
+        'Filename': 'file', // Default Filename should still be included
+      })
+    );
+  });  
 });

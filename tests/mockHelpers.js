@@ -2,17 +2,20 @@ const { TextDecoder, TextEncoder } = require('util');
 
 function createMockBee() {
   return {
-    uploadFile: jest.fn((stamp, fileData, fileName) => {
+    uploadFile: jest.fn((stamp, fileData, fileName, headers) => {
       console.log(`Mock uploadFile called with fileName: ${fileName}`);
-      return Promise.resolve({ reference: 'a'.repeat(64) }); // Valid 64-character hex string
+      expect(headers).toEqual(expect.objectContaining({ contentType: expect.any(String) }));
+      return Promise.resolve({ reference: 'b'.repeat(64) });
     }),
-    uploadData: jest.fn((stamp, data) => {
+    uploadData: jest.fn(() => {
       console.log('Mock uploadData called');
-      return Promise.resolve({ reference: 'b'.repeat(64) }); // Valid 64-character hex string
+      return Promise.resolve({ reference: 'b'.repeat(64) });
     }),
     downloadFile: jest.fn((reference) => {
       console.log(`Mock downloadFile called with reference: ${reference}`);
-      return Promise.resolve({ data: Buffer.from(`Mock content for ${reference}`) });
+      return Promise.resolve({
+        data: Buffer.from(`Mock content for ${reference}`),
+      });
     }),
   };
 }
@@ -27,14 +30,22 @@ function createMockMantarayNode(customForks = null) {
             prefix: encodePathToBytes('1.txt'),
             node: {
               isValueType: () => true,
-              getEntry: new Uint8Array(Buffer.from('a'.repeat(64), 'hex')), // Valid Uint8Array
+              getEntry: new Uint8Array(Buffer.from('a'.repeat(64), 'hex')),
+              metadata: {
+                'Filename': '1.txt',
+                'Content-Type': 'text/plain',
+              },
             },
           },
           '2.txt': {
             prefix: encodePathToBytes('2.txt'),
             node: {
               isValueType: () => true,
-              getEntry: new Uint8Array(Buffer.from('b'.repeat(64), 'hex')), // Valid Uint8Array
+              getEntry: new Uint8Array(Buffer.from('b'.repeat(64), 'hex')),
+              metadata: {
+                'Filename': '2.txt',
+                'Content-Type': 'text/plain',
+              },
             },
           },
         },
@@ -45,12 +56,18 @@ function createMockMantarayNode(customForks = null) {
 
   return {
     forks: customForks || defaultForks,
-    addFork: jest.fn((path, reference) => {
+    addFork: jest.fn((path, reference, metadata) => {
       const decodedPath = path ? new TextDecoder().decode(path) : '';
       console.log(`Mock addFork called with path: ${decodedPath}`);
+      console.log(`Metadata received: ${JSON.stringify(metadata)}`);
+
       defaultForks[decodedPath] = {
         prefix: path || undefined,
-        node: { isValueType: () => true, getEntry: reference },
+        node: {
+          isValueType: () => true,
+          getEntry: reference,
+          metadata: { ...(defaultForks[decodedPath]?.node?.metadata || {}), ...metadata },
+        },
       };
     }),
     save: jest.fn(async (callback) => {

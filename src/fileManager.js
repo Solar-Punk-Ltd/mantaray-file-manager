@@ -18,45 +18,60 @@ class FileManager {
     return new MantarayNode();
   }
 
-  async uploadFile(file, mantaray, stamp) {
+  async uploadFile(file, mantaray, stamp, customMetadata = {}, redundancyLevel = '1') {
     console.log(`Uploading file: ${file}`);
     const fileData = readFileSync(file);
-    console.log(`File content: ${fileData.toString('utf-8')}`); // Log the content for clarity
     const fileName = path.basename(file);
-    const contentType = getContentType(fileName);
-    console.log(`File name: ${fileName}, Content-Type: ${contentType}`);
+    const contentType = getContentType(file);
 
-    const uploadResponse = await this.bee.uploadFile(stamp, fileData, fileName);
+    const metadata = {
+      'Content-Type': contentType,
+      'Content-Size': fileData.length.toString(),
+      'Time-Uploaded': new Date().toISOString(),
+      'Filename': fileName,
+      'Custom-Metadata': JSON.stringify(customMetadata),
+    };
+
+    const uploadHeaders = {
+      contentType,
+      headers: {
+        'swarm-redundancy-level': redundancyLevel,
+      },
+    };
+
+    const uploadResponse = await this.bee.uploadFile(stamp, fileData, fileName, uploadHeaders);
     console.log(`File uploaded with reference: ${uploadResponse.reference}`);
 
-    this.addToMantaray(mantaray, uploadResponse.reference, {
-      Filename: fileName,
-      'Content-Type': contentType,
-    });
+    this.addToMantaray(mantaray, uploadResponse.reference, metadata);
     return uploadResponse.reference;
   }
 
   addToMantaray(mantaray, reference, metadata = {}) {
     const filePath = metadata.Filename || 'file';
+    metadata.Filename = filePath; // Ensure Filename is always included in metadata
     const bytesPath = encodePathToBytes(filePath);
     const formattedReference = hexStringToReference(reference);
+  
     console.log(`Adding file to Mantaray: ${filePath}, Reference: ${reference}`);
-    mantaray.addFork(bytesPath, formattedReference);
-  }
+    mantaray.addFork(bytesPath, formattedReference, { ...metadata }); // Use spread operator to prevent overwrites
+  }  
 
   async saveMantaray(mantaray, stamp) {
     console.log('Saving Mantaray manifest...');
     const manifestReference = await mantaray.save(async (data) => {
-      console.log(`saveMantaray: uploading data of length ${data.length}...`);
-      const uploadResults = await this.bee.uploadData(stamp, data);
-      console.log(`Uploaded Mantaray data. Reference: ${uploadResults.reference}`);
-      return hexStringToReference(uploadResults.reference);
+      const fileName = 'manifest';
+      const contentType = 'application/json';
+      const uploadResponse = await this.bee.uploadFile(stamp, data, fileName, { contentType });
+      console.log(`Uploaded Mantaray manifest with reference: ${uploadResponse.reference}`);
+      return this.hexStringToReference(uploadResponse.reference);
     });
-    console.log(`Mantaray manifest saved. Uint8Array Reference: ${manifestReference}`);
-    return Buffer.from(manifestReference).toString('hex');
+
+    const hexReference = Buffer.from(manifestReference).toString('hex');
+    console.log(`Mantaray manifest saved with reference: ${hexReference}`);
+    return hexReference;
   }
 
-  listFiles(mantaray, currentPath = '') {
+  listFiles(mantaray, currentPath = '', includeMetadata = false) {
     console.log('Listing files in Mantaray...');
     const files = [];
     const forks = mantaray.forks;
@@ -67,63 +82,62 @@ class FileManager {
     }
   
     for (const fork of Object.values(forks)) {
-      const prefixBytes = fork.prefix || new Uint8Array(); // Handle undefined prefixes
-      const prefix = decodeBytesToPath(prefixBytes);
-      const fullPath = path.join(currentPath, prefix).replace(/\\/g, '/'); // Normalize path separators
+      const prefixBytes = fork.prefix || new Uint8Array();
+      const prefix = prefixBytes.length > 0 ? decodeBytesToPath(prefixBytes) : ''; // Handle undefined prefixes
+      const fullPath = path.join(currentPath, prefix).replace(/\\/g, '/');
   
       console.log(`Processing prefix: ${prefix}`);
       if (fork.node.isValueType()) {
-        console.log(`File found: ${fullPath}`);
-        files.push(fullPath);
+        const fileEntry = { path: fullPath };
+        if (includeMetadata) {
+          fileEntry.metadata = fork.node.metadata || {};
+        }
+        files.push(fileEntry);
       } else {
-        console.log(`Descending into directory: ${fullPath}`);
-        files.push(...this.listFiles(fork.node, fullPath));
+        files.push(...this.listFiles(fork.node, fullPath, includeMetadata));
       }
     }
-    console.log(`Files in Mantaray: ${files}`);
+    console.log(`Files in Mantaray: ${JSON.stringify(files)}`);
     return files;
   }  
 
   async downloadFile(mantaray, filePath) {
     console.log(`Downloading file: ${filePath}`);
-    const files = this.listFiles(mantaray);
-    if (!files.includes(filePath)) {
-      console.error(`File not found in Mantaray: ${filePath}`);
-      throw new Error(`File not found in Mantaray: ${filePath}`);
-    }
-
     const normalizedPath = path.normalize(filePath);
     const segments = normalizedPath.split(path.sep);
     let currentNode = mantaray;
-
+  
     for (const segment of segments) {
       const segmentBytes = encodePathToBytes(segment);
-      console.log(`Processing segment: ${segment}`);
       const fork = Object.values(currentNode.forks || {}).find(
         (f) => Buffer.compare(f.prefix, segmentBytes) === 0
       );
-
+  
       if (!fork) throw new Error(`Path segment not found: ${segment}`);
       currentNode = fork.node;
     }
-
+  
     if (!currentNode.isValueType()) {
       throw new Error(`Path does not point to a file: ${filePath}`);
     }
-
+  
     const fileReference = currentNode.getEntry;
     const hexReference = Buffer.from(fileReference).toString('hex');
     console.log(`Downloading file with reference: ${hexReference}`);
-
+  
+    const metadata = currentNode.metadata || {};
     try {
       const fileData = await this.bee.downloadFile(hexReference);
       console.log(`Downloaded content: ${fileData.data.toString('utf-8')}`);
-      return fileData.data ? Buffer.from(fileData.data).toString('utf-8').trim() : '';
+      return {
+        data: fileData.data ? Buffer.from(fileData.data).toString('utf-8').trim() : '',
+        metadata,
+      };
     } catch (error) {
       console.error(`Error downloading file ${filePath}:`, error.message);
       throw error;
     }
-  }
+  }  
 
   async downloadFiles(mantaray) {
     console.log('Downloading all files from Mantaray...');
@@ -132,15 +146,16 @@ class FileManager {
 
     for (const fork of Object.values(forks)) {
       const prefix = decodeBytesToPath(fork.prefix || []);
-      console.log(`Processing prefix: ${prefix}`);
       const fileReference = fork.node.getEntry;
 
       if (fork.node.isValueType() && fileReference) {
         const hexReference = Buffer.from(fileReference).toString('hex');
+        const metadata = fork.metadata || {};
         console.log(`Downloading file with reference: ${hexReference}`);
         try {
           const fileData = await this.bee.downloadFile(hexReference);
           console.log(`Contents of ${prefix}: ${Buffer.from(fileData.data).toString('utf-8')}`);
+          console.log(`Metadata for ${prefix}: ${JSON.stringify(metadata)}`);
         } catch (error) {
           console.error(`Error downloading file ${prefix}:`, error.message);
         }
@@ -149,6 +164,14 @@ class FileManager {
         await this.downloadFiles(fork.node);
       }
     }
+  }
+
+  encodePathToBytes(filePath) {
+    return new TextEncoder().encode(filePath);
+  }
+
+  hexStringToReference(hex) {
+    return new Uint8Array(Buffer.from(hex, 'hex'));
   }
 }
 
