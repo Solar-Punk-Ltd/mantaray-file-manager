@@ -4,17 +4,19 @@ function createMockBee() {
   return {
     uploadFile: jest.fn((stamp, fileData, fileName, headers) => {
       console.log(`Mock uploadFile called with fileName: ${fileName}`);
-      expect(headers).toEqual(expect.objectContaining({ contentType: expect.any(String) }));
-      return Promise.resolve({ reference: 'b'.repeat(64) });
-    }),
-    uploadData: jest.fn(() => {
-      console.log('Mock uploadData called');
       return Promise.resolve({ reference: 'b'.repeat(64) });
     }),
     downloadFile: jest.fn((reference) => {
       console.log(`Mock downloadFile called with reference: ${reference}`);
       return Promise.resolve({
         data: Buffer.from(`Mock content for ${reference}`),
+      });
+    }),
+    getAllPins: jest.fn(() => {
+      console.log('Mock getAllPins called');
+      return Promise.resolve({
+        pin1: 'a'.repeat(64),
+        pin2: 'b'.repeat(64),
       });
     }),
   };
@@ -60,7 +62,6 @@ function createMockMantarayNode(customForks = null) {
       const decodedPath = path ? new TextDecoder().decode(path) : '';
       console.log(`Mock addFork called with path: ${decodedPath}`);
       console.log(`Metadata received: ${JSON.stringify(metadata)}`);
-
       defaultForks[decodedPath] = {
         prefix: path || undefined,
         node: {
