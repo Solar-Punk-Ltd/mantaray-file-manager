@@ -70,7 +70,7 @@ describe('FileManager - initialize', () => {
     console.error = jest.fn(); // Mock console.error
   
     await expect(fileManager.initialize()).rejects.toThrow('Mock error during import');
-    expect(console.error).toHaveBeenCalledWith('[ERROR] Failed to import pinned references: Mock error during import');
+    expect(console.error).toHaveBeenCalledWith('[ERROR] Failed to import references: Mock error during import');
   });  
 });
 
