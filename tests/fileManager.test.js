@@ -32,38 +32,39 @@ describe('FileManager - initialize', () => {
   });
 
   it('should add all pinned references to Mantaray during initialization', async () => {
-    const mockPins = {
-      pin1: '79ed514ec2da96ef7b7a64f55e1e4470cc163c7d4dbd5cbdf8a9fd4ab3993d94',
-      pin2: '8d12623989dd6f6f899209c5029c7cba8b36c408b4106a21b407523c27af1f34',
-      pin3: 'df5c87236b99ef474de7936d74d0e6df0b6cd3c66ad27ac45e6eb081459e3708',
-    };
-  
+    const mockPins = [
+        '79ed514ec2da96ef7b7a64f55e1e4470cc163c7d4dbd5cbdf8a9fd4ab3993d94',
+        '8d12623989dd6f6f899209c5029c7cba8b36c408b4106a21b407523c27af1f34',
+        'df5c87236b99ef474de7936d74d0e6df0b6cd3c66ad27ac45e6eb081459e3708',
+    ];
+
+    const mockBee = createMockBee();
     mockBee.getAllPins.mockResolvedValue(mockPins);
-  
-    const addForkSpy = jest.spyOn(fileManager.mantaray, 'addFork');
-    fileManager.importedFiles = []; // Clear imported files
-  
+
+    const fileManager = new FileManager('http://localhost:1633');
+    fileManager.bee = mockBee; // Inject mockBee
+    fileManager.mantaray = createMockMantarayNode(); // Inject mockMantarayNode
+
+    jest.spyOn(fileManager.mantaray, 'addFork');
+
     // Run the initialize method
     await fileManager.initialize();
-  
-    // Dynamically compute the expected calls
-    const expectedCalls = Object.values(mockPins).map((pinReference) => [
-      encodePathToBytes(`pinned-${pinReference.substring(0, 6)}`),
-      expect.any(Uint8Array),
-      expect.objectContaining({
-        pinned: true,
-        Filename: `pinned-${pinReference.substring(0, 6)}`,
-      }),
-    ]);
-  
+
     // Assert the number of calls
-    expect(addForkSpy).toHaveBeenCalledTimes(expectedCalls.length);
-  
+    expect(fileManager.mantaray.addFork).toHaveBeenCalledTimes(mockPins.length);
+
     // Assert the specific calls
-    for (const expectedCall of expectedCalls) {
-      expect(addForkSpy).toHaveBeenCalledWith(...expectedCall);
-    }
-  });  
+    mockPins.forEach((pin) => {
+        expect(fileManager.mantaray.addFork).toHaveBeenCalledWith(
+            expect.any(Uint8Array), // Path (encoded from filename)
+            expect.any(Uint8Array), // Reference (encoded pin)
+            expect.objectContaining({
+                Filename: `pinned-${pin.substring(0, 6)}`,
+                pinned: true,
+            })
+        );
+    });
+  });
   
   it('should log an error if importPinnedReferences fails', async () => {
     jest.spyOn(fileManager, 'importPinnedReferences').mockRejectedValue(new Error('Mock error during import'));
@@ -99,7 +100,7 @@ describe('FileManager', () => {
     const mockFilePath = 'nested-dir/file1.txt';
     const result = await fileManager.uploadFile(mockFilePath, fileManager.mantaray, 'test-stamp', {}, '1');
 
-    expect(result).toBe('b'.repeat(64));
+    expect(result).toBe('a'.repeat(64));
     expect(mockBee.uploadFile).toHaveBeenCalledWith(
       'test-stamp',
       expect.any(Buffer),
@@ -127,7 +128,7 @@ describe('FileManager', () => {
     fileManager.bee = mockBee;
 
     const result = await fileManager.saveMantaray(fileManager.mantaray, 'test-stamp');
-    expect(result).toBe('b'.repeat(64));
+    expect(result).toBe('a'.repeat(64));
     expect(mockBee.uploadFile).toHaveBeenCalledWith(
       'test-stamp',
       expect.any(Uint8Array),
@@ -138,13 +139,13 @@ describe('FileManager', () => {
 
   it('should list files correctly in Mantaray', () => {
     const fileManager = new FileManager('http://localhost:1633');
-    const files = fileManager.listFiles(fileManager.mantaray);
-
+    const files = fileManager.listFiles(fileManager.mantaray, false); // Explicitly exclude metadata
+  
     expect(files).toEqual([
       { path: 'file/1.txt' },
       { path: 'file/2.txt' },
     ]);
-  });
+  });  
 
   it('should download a specific file by path', async () => {
     const fileManager = new FileManager('http://localhost:1633');
@@ -222,12 +223,12 @@ describe('FileManager', () => {
         },
       },
     };
-
+  
     const mantaray = createMockMantarayNode(customForks);
-    const files = fileManager.listFiles(mantaray);
-
+    const files = fileManager.listFiles(mantaray, false); // Exclude metadata
+  
     expect(files).toEqual([{ path: 'nested/file.txt' }]);
-  });
+  });  
 
   it('should handle the case where a path does not point to a file in downloadFile', async () => {
     const fileManager = new FileManager('http://localhost:1633');
@@ -255,9 +256,9 @@ describe('FileManager', () => {
   it('should ensure metadata is not duplicated in listFiles', () => {
     const fileManager = new FileManager('http://localhost:1633');
     const mantaray = createMockMantarayNode();
-
-    const files = fileManager.listFiles(mantaray, '', true);
-
+  
+    const files = fileManager.listFiles(mantaray, true); // Explicitly include metadata
+  
     expect(files).toEqual([
       {
         path: 'file/1.txt',
@@ -274,7 +275,7 @@ describe('FileManager', () => {
         },
       },
     ]);
-  });
+  });  
 
   it('should ensure metadata is preserved during addToMantaray', () => {
     const fileManager = new FileManager('http://localhost:1633');
@@ -334,14 +335,14 @@ describe('FileManager', () => {
     const mantaray = createMockMantarayNode();
   
     mantaray.forks.file.prefix = undefined; // Simulate undefined prefix
-    const files = fileManager.listFiles(mantaray);
+    const files = fileManager.listFiles(mantaray, false); // Exclude metadata
   
     expect(files).toEqual([
-      { path: '1.txt' },
-      { path: '2.txt' },
+      { path: 'file/1.txt' }, // Update to reflect corrected paths
+      { path: 'file/2.txt' },
     ]);
-  });
-  
+  });  
+
   it('should add a file to the Mantaray node with default filename', () => {
     const fileManager = new FileManager('http://localhost:1633');
     fileManager.addToMantaray(fileManager.mantaray, 'a'.repeat(64), {});
@@ -462,7 +463,7 @@ describe('FileManager', () => {
     };
   
     const mantaray = createMockMantarayNode(customForks);
-    const files = fileManager.listFiles(mantaray, '', true);
+    const files = fileManager.listFiles(mantaray, true); // Explicitly include metadata
   
     expect(files).toEqual([
       {

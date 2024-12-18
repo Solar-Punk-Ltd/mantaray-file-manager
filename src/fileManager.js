@@ -13,8 +13,18 @@ class FileManager {
     this.bee = new Bee(beeUrl);
     this.mantaray = new MantarayNode();
     this.importedFiles = [];
+
+    // Create personalized feed
+  } 
+
+  async intializeMantarayUsingFeed() {
+    //
   }
 
+  async loadMantaray(manifestReference) {
+    this.mantaray = mantaray.load(manifestReference, downloadFile)
+  }
+  
   async initialize(items) {
     console.log('Importing references...');
     try {
@@ -211,14 +221,20 @@ class FileManager {
 
   addToMantaray(mantaray, reference, metadata = {}) {
     mantaray = mantaray || this.mantaray;
-    const filePath = metadata.Filename || 'file';
-    metadata.Filename = filePath;
+  
+    const filePath = metadata.fullPath || metadata.Filename || 'file';
+    const originalFileName = metadata.originalFileName || path.basename(filePath);
+  
     const bytesPath = encodePathToBytes(filePath);
     const formattedReference = hexStringToReference(reference);
-
-    console.log(`Adding file to Mantaray: ${filePath}, Reference: ${reference}`);
-    mantaray.addFork(bytesPath, formattedReference, { ...metadata });
-  }
+  
+    const metadataWithOriginalName = {
+      ...metadata,
+      'Filename': originalFileName, // Use the original filename here
+    };
+  
+    mantaray.addFork(bytesPath, formattedReference, metadataWithOriginalName);
+  }  
 
   async saveMantaray(mantaray, stamp) {
     mantaray = mantaray || this.mantaray;
@@ -234,14 +250,13 @@ class FileManager {
     console.log(`Mantaray manifest saved with reference: ${hexReference}`);
     return hexReference;
   }
-
-  listFiles(mantaray, currentPath = '', includeMetadata = false) {
+  
+  listFiles(mantaray, includeMetadata = false) {
     mantaray = mantaray || this.mantaray;
     console.log('Listing files in Mantaray...');
   
-    const files = [];
-    const stack = [{ node: mantaray, path: currentPath }];
-    const pathSeparator = '/';
+    const fileList = [];
+    const stack = [{ node: mantaray, path: '' }];
   
     while (stack.length > 0) {
       const { node, path: currentPath } = stack.pop();
@@ -249,25 +264,142 @@ class FileManager {
   
       if (!forks) continue;
   
-      for (const fork of Object.values(forks)) {
-        const prefixBytes = fork.prefix || new Uint8Array();
-        const prefix = prefixBytes.length > 0 ? decodeBytesToPath(prefixBytes) : '';
-        const fullPath = currentPath + (currentPath && prefix ? pathSeparator : '') + prefix;
+      for (const [key, fork] of Object.entries(forks)) {
+        const prefix = fork.prefix ? decodeBytesToPath(fork.prefix) : key || 'unknown';
+        const fullPath = path.join(currentPath, prefix);
   
         if (fork.node.isValueType()) {
-          files.push(
-            includeMetadata
-              ? { path: fullPath, metadata: fork.node.metadata || {} }
-              : { path: fullPath }
-          );
+          const metadata = fork.node.metadata || {};
+          let originalPath = fullPath;
+  
+          if (metadata['Custom-Metadata']) {
+            try {
+              const customMetadata = JSON.parse(metadata['Custom-Metadata']);
+              originalPath = customMetadata.fullPath || fullPath;
+            } catch (e) {
+              console.warn(`Invalid metadata JSON for ${fullPath}, using default path.`);
+            }
+          }
+  
+          const fileEntry = { path: originalPath };
+          if (includeMetadata) {
+            fileEntry.metadata = metadata;
+          }
+  
+          fileList.push(fileEntry);
         } else {
           stack.push({ node: fork.node, path: fullPath });
         }
       }
     }
   
-    return files;
+    return fileList;
   }  
+
+  getDirectoryStructure(mantaray, rootDirName ) {
+    mantaray = mantaray || this.mantaray;
+    console.log('Building directory structure from Mantaray...');
+
+    const structure = this.buildDirectoryStructure(mantaray);
+
+    const wrappedStructure = {
+        [rootDirName]: structure
+    };
+
+    return wrappedStructure;
+}
+
+buildDirectoryStructure(mantaray) {
+    mantaray = mantaray || this.mantaray;
+    console.log('Building raw directory structure...');
+
+    const structure = {};
+    const fileList = this.listFiles(mantaray);
+
+    for (const file of fileList) {
+        const filePath = file.path;
+        const relativePath = path.posix.normalize(filePath); 
+        const dirPath = path.posix.dirname(relativePath);
+        const fileName = path.posix.basename(relativePath);
+
+        let currentDir = structure;
+        if (dirPath === '.' || dirPath === '') {
+            currentDir[fileName] = null;
+        } else {
+            const dirParts = dirPath.split('/');
+            for (const dir of dirParts) {
+                if (!currentDir[dir]) {
+                    currentDir[dir] = {};
+                }
+                currentDir = currentDir[dir];
+            }
+
+            currentDir[fileName] = null;
+        }
+    }
+
+    return structure;
+}
+
+
+
+
+
+getContentsOfDirectory(targetPath, mantaray, rootDirName ) {
+    mantaray = mantaray || this.mantaray;
+
+   
+    const directoryStructure = this.getDirectoryStructure(mantaray, rootDirName);
+
+    if (targetPath === rootDirName || targetPath === '.') {
+        const rootContents = Object.keys(directoryStructure[rootDirName] || {});
+        console.log(`Contents of root directory '${rootDirName}':`, rootContents);
+        return rootContents;
+    }
+
+    const normalizedTargetPath = path.posix.normalize(targetPath);
+
+    const rootDirectory = directoryStructure[rootDirName];
+    if (!rootDirectory) {
+        console.error(`[ERROR] Root directory '${rootDirName}' not found.`);
+        return [];
+    }
+
+    // Recursive helper function to locate the target directory
+    const findDirectory = (currentDir, currentPath) => {
+        if (currentPath === normalizedTargetPath || currentPath === `./${normalizedTargetPath}`) {
+            return currentDir; 
+        }
+
+        for (const key in currentDir) {
+            const newPath = path.posix.join(currentPath, key);
+
+            if (typeof currentDir[key] === 'object') {
+                const result = findDirectory(currentDir[key], newPath);
+                if (result) return result; 
+            }
+        }
+
+        return null; 
+    };
+
+    const targetDirectory = findDirectory(rootDirectory, '');
+
+    if (!targetDirectory) {
+        console.error(`[ERROR] Directory not found: ${targetPath}`);
+        return [];
+    }
+
+    const contents = Object.keys(targetDirectory);
+    console.log(`Contents of '${targetPath}':`, contents);
+
+    return contents;
+}
+
+
+
+  
+  
 }
 
 module.exports = FileManager;
