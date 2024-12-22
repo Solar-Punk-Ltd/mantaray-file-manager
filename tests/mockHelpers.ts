@@ -1,6 +1,7 @@
-const { TextDecoder, TextEncoder } = require('util');
+import * as jest from 'jest-mock';
+import { TextDecoder, TextEncoder } from 'util';
 
-function createMockBee() {
+export function createMockBee() {
   return {
     uploadFile: jest.fn((stamp, fileData, fileName) => {
       console.log(`Mock uploadFile called with fileName: ${fileName}`);
@@ -25,51 +26,51 @@ function createMockBee() {
   };
 }
 
-function createMockMantarayNode(customForks = null) {
+export function createMockMantarayNode(customForks = null) {
   const defaultForks = {
     file: {
-        prefix: encodePathToBytes('file'),
-        node: {
-            forks: {
-                '1.txt': {
-                    prefix: encodePathToBytes('1.txt'),
-                    node: {
-                        isValueType: () => true,
-                        getEntry: new Uint8Array(Buffer.from('a'.repeat(64), 'hex')), // Valid Uint8Array
-                        metadata: {
-                            'Filename': '1.txt',
-                            'Content-Type': 'text/plain',
-                        },
-                    },
-                },
-                '2.txt': {
-                    prefix: encodePathToBytes('2.txt'),
-                    node: {
-                        isValueType: () => true,
-                        getEntry: new Uint8Array(Buffer.from('b'.repeat(64), 'hex')), // Valid Uint8Array
-                        metadata: {
-                            'Filename': '2.txt',
-                            'Content-Type': 'text/plain',
-                        },
-                    },
-                },
+      prefix: encodePathToBytes('file'),
+      node: {
+        forks: {
+          '1.txt': {
+            prefix: encodePathToBytes('1.txt'),
+            node: {
+              isValueType: () => true,
+              getEntry: new Uint8Array(Buffer.from('a'.repeat(64), 'hex')), // Valid Uint8Array
+              metadata: {
+                Filename: '1.txt',
+                'Content-Type': 'text/plain',
+              },
             },
-            isValueType: () => false,
+          },
+          '2.txt': {
+            prefix: encodePathToBytes('2.txt'),
+            node: {
+              isValueType: () => true,
+              getEntry: new Uint8Array(Buffer.from('b'.repeat(64), 'hex')), // Valid Uint8Array
+              metadata: {
+                Filename: '2.txt',
+                'Content-Type': 'text/plain',
+              },
+            },
+          },
         },
+        isValueType: () => false,
+      },
     },
   };
 
   return {
     forks: customForks || defaultForks,
     addFork: jest.fn((path, reference) => {
-      const decodedPath = path ? new TextDecoder().decode(path) : '';
+      const decodedPath = path && path instanceof Uint8Array ? new TextDecoder().decode(path) : '';
       console.log(`Mock addFork called with path: ${decodedPath}`);
       defaultForks[decodedPath] = {
         prefix: path || undefined,
         node: { isValueType: () => true, getEntry: reference },
       };
     }),
-    save: jest.fn(async (callback) => {
+    save: jest.fn(async (callback: any) => {
       console.log('Mock save called');
       const mockData = new Uint8Array(Buffer.from('mocked-mantaray-data'));
       const reference = await callback(mockData);
@@ -81,8 +82,3 @@ function createMockMantarayNode(customForks = null) {
 function encodePathToBytes(path) {
   return path ? new TextEncoder().encode(path) : new Uint8Array(); // Default to empty array
 }
-
-module.exports = {
-  createMockBee,
-  createMockMantarayNode,
-};

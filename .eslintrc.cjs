@@ -1,27 +1,40 @@
 module.exports = {
-  env: {
-    node: true, // Node.js environment
-    jest: true, // Jest environment
-  },
+  root: true,
+  env: { browser: true, es2020: true },
+  parser: '@typescript-eslint/parser',
   parserOptions: {
-    ecmaVersion: 2021,
-    sourceType: 'script', // CommonJS mode
+    ecmaVersion: 2020,
+    sourceType: 'module',
   },
-  globals: {
-    require: 'readonly',
-    module: 'readonly',
-    Buffer: 'readonly',
-    process: 'readonly',
-    TextEncoder: 'readonly',
-    TextDecoder: 'readonly',
-    jest: 'readonly',
-    describe: 'readonly',
-    it: 'readonly',
-    expect: 'readonly',
-    beforeEach: 'readonly',
-  },
+  extends: [
+    'eslint:recommended',
+    'plugin:@typescript-eslint/recommended',
+    'plugin:import/errors',
+    'plugin:import/warnings',
+    'plugin:import/typescript',
+    'plugin:prettier/recommended',
+    'prettier',
+  ],
+  ignorePatterns: ['dist', '.eslintrc.cjs'],
+  plugins: ['@typescript-eslint', 'simple-import-sort'],
   rules: {
-    'no-unused-vars': 'warn',
-    'no-undef': 'error',
+    '@typescript-eslint/no-explicit-any': 'off',
+    '@typescript-eslint/no-non-null-assertion': 'off',
+    '@typescript-eslint/no-unused-vars': [
+      'warn',
+      { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' },
+    ],
+    'simple-import-sort/imports': [
+      'error',
+      {
+        groups: [
+          ['^@?\\w'], // Packages
+          ['^\\u0000'], // Side effect imports
+          ['^\\.\\.(?!/?$)', '^\\.\\./?$'], // Parent imports
+          ['^\\./(?=.*/)(?!/?$)', '^\\.(?!/?$)', '^\\./?$'], // Other relative imports
+          ['^.+\\.?(css)$'], // Style imports
+        ],
+      },
+    ],
   },
 };
