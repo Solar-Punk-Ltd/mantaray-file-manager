@@ -1,58 +1,58 @@
-import { BatchId, Bee, Reference, Utils } from '@ethersphere/bee-js';
+import { BatchId, Bee, PostageBatch, Reference, Utils } from '@ethersphere/bee-js';
 import { readFileSync } from 'fs';
 import { MantarayNode, MetadataMapping, Reference as MantarayRef } from 'mantaray-js';
 import path from 'path';
 
-import { DEFAULT_FEED_TYPE, FileMetadata } from './types';
+import { DEFAULT_FEED_TYPE, STAMP_LIST_TOIC } from './constants';
+import { FileWithMetadata, StampList, StampWithMetadata } from './types';
 import { encodePathToBytes, getContentType } from './utils';
 
 export class FileManager {
   // TODO: private vars
   public bee: Bee;
   public mantaray: MantarayNode;
-  public importedFiles: FileMetadata[];
+  public importedFiles: FileWithMetadata[];
 
-  constructor(beeUrl: string) {
+  private stampList: StampWithMetadata[];
+  private nextStampFeedIndex: string;
+  private privateKey: string;
+
+  constructor(beeUrl: string, privateKey: string) {
     if (!beeUrl) {
       throw new Error('Bee URL is required for initializing the FileManager.');
     }
+    if (!privateKey) {
+      throw new Error('privateKey is required for initializing the FileManager.');
+    }
     console.log('Initializing Bee client...');
     this.bee = new Bee(beeUrl);
+    this.stampList = [];
+    this.nextStampFeedIndex = '';
+    this.privateKey = privateKey;
     this.mantaray = new MantarayNode();
     this.importedFiles = [];
 
     // Create personalized feed
   }
 
-  async intializeMantarayUsingFeed() {
-    //
-  }
-
-  async loadMantaray(manifestReference: Reference) {
-    const loadFunction = async (address: MantarayRef): Promise<Uint8Array> => {
-      return this.bee.downloadData(Utils.bytesToHex(address));
-    };
-
-    this.mantaray.load(loadFunction, Utils.hexToBytes(manifestReference));
-  }
-
-  // TODO: Implement this method
-  async updateStampData(topic: string, privateKey: string) {
-    const fw = this.bee.makeFeedWriter(DEFAULT_FEED_TYPE, topic, privateKey);
-  }
-
-  async getUsableStamps() {
-    try {
-      const stamps = await this.bee.getAllPostageBatch();
-      return stamps.filter((s) => s.usable);
-    } catch (error) {
-      console.error(`Failed to get usable stamps: ${error}`);
-      return [];
-    }
-  }
-
+  // TODO: use allSettled for file fetching and only save the ones that are successful
   async initialize(items: any | undefined) {
-    console.log('Importing references...');
+    console.log('Importing stamps and references...');
+    try {
+      await this.initStamps();
+      if (this.stampList.length > 0) {
+        console.log('Using stamp list for initialization.');
+        for (const elem of this.stampList) {
+          if (elem.fileReferences !== undefined && elem.fileReferences.length > 0) {
+            await this.importReferences(elem.fileReferences as Reference[], elem.stamp.batchID);
+          }
+        }
+      }
+    } catch (error: any) {
+      console.error(`[ERROR] Failed to initialize stamps: ${error.message}`);
+      throw error;
+    }
+
     try {
       if (items) {
         console.log('Using provided items for initialization.');
@@ -68,7 +68,130 @@ export class FileManager {
     }
   }
 
-  async importReferences(referenceList: Reference[], isLocal = false) {
+  async intializeMantarayUsingFeed() {
+    //
+  }
+
+  async loadMantaray(manifestReference: Reference) {
+    const loadFunction = async (address: MantarayRef): Promise<Uint8Array> => {
+      return this.bee.downloadData(Utils.bytesToHex(address));
+    };
+
+    this.mantaray.load(loadFunction, Utils.hexToBytes(manifestReference));
+  }
+
+  // TODO: method to list new stamp with files
+  // TODO: encrypt
+  // TODO: how and how long to store the stamps feed data ?
+  async updateStampData(stamp: string | BatchId, privateKey: string): Promise<void> {
+    const feedWriter = this.bee.makeFeedWriter(
+      DEFAULT_FEED_TYPE,
+      STAMP_LIST_TOIC,
+      privateKey /*, { headers: { encrypt: "true" } }*/,
+    );
+    try {
+      const data = JSON.stringify({ filesOfStamps: this.stampList.map((s) => [s.stamp.batchID, s.fileReferences]) });
+      const stampListDataRef = await this.bee.uploadData(stamp, data);
+      const writeResult = await feedWriter.upload(stamp, stampListDataRef.reference, {
+        index: this.nextStampFeedIndex,
+      });
+      console.log('Stamp feed updated: ', writeResult.reference);
+    } catch (error: any) {
+      console.error(`Failed to download feed update: ${error}`);
+      return;
+    }
+  }
+
+  // TODO: fetch usable stamps or read from feed
+  // TODO: import other stamps in order to topup: owner(s) ?
+  async initStamps(): Promise<void> {
+    try {
+      this.stampList = await this.getUsableStamps();
+      console.log('Usable stamps fetched successfully.');
+    } catch (error: any) {
+      console.error(`Failed to update stamps: ${error}`);
+      throw error;
+    }
+
+    // TODO: stamps of other users -> feature to fetch other nodes' stamp data
+    const feedReader = this.bee.makeFeedReader(DEFAULT_FEED_TYPE, STAMP_LIST_TOIC, this.privateKey);
+    try {
+      const latestFeedData = await feedReader.download();
+      this.nextStampFeedIndex = latestFeedData.feedIndexNext;
+      const stampListData = (await this.bee.downloadData(latestFeedData.reference)).text();
+      const stampList = JSON.parse(stampListData) as StampList;
+      for (const [batchId, fileRefs] of stampList.filesOfStamps) {
+        // if (this.stampList.find((s) => s.stamp.batchID === stamp.stamp.batchID) === undefined) {
+        //   await this.fetchStamp(stamp.stamp.batchID);
+        // }
+        const stampIx = this.stampList.findIndex((s) => s.stamp.batchID === batchId);
+        if (stampIx !== -1) {
+          if (fileRefs.length > 0) {
+            this.stampList[stampIx].fileReferences = [...fileRefs];
+          }
+        }
+      }
+      console.log('File referene list fetched from feed.');
+    } catch (error: any) {
+      console.error(`Failed to fetch file reference list from feed: ${error}`);
+      return;
+    }
+  }
+
+  async getUsableStamps(): Promise<StampWithMetadata[]> {
+    try {
+      const stamps = (await this.bee.getAllPostageBatch()).filter((s) => s.usable);
+      // TOOD: files as importedFiles
+      return stamps.map((s) => ({ stamp: s, files: [] }));
+    } catch (error: any) {
+      console.error(`Failed to get usable stamps: ${error}`);
+      return [];
+    }
+  }
+
+  async filterBatches(ttl?: number, utilization?: number, capacity?: number): Promise<StampWithMetadata[]> {
+    // TODO: clarify depth vs capacity
+    return this.stampList.filter((s) => {
+      if (utilization !== undefined && s.stamp.utilization <= utilization) {
+        return false;
+      }
+
+      if (capacity !== undefined && s.stamp.depth <= capacity) {
+        return false;
+      }
+
+      if (ttl !== undefined && s.stamp.batchTTL <= ttl) {
+        return false;
+      }
+
+      return true;
+    });
+  }
+
+  async getLocalStamp(batchId: string | BatchId): Promise<StampWithMetadata | undefined> {
+    return this.stampList.find((s) => s.stamp.batchID === batchId);
+  }
+
+  async fetchStamp(batchId: string | BatchId): Promise<PostageBatch | undefined> {
+    try {
+      // TODO: what if stamp is not usable
+      const newStamp = await this.bee.getPostageBatch(batchId);
+      if (newStamp.exists && newStamp.usable) {
+        this.stampList.push({ stamp: newStamp });
+        return newStamp;
+      }
+      return undefined;
+    } catch (error: any) {
+      console.error(`Failed to get stamp with bathcID ${batchId}: ${error}`);
+      return undefined;
+    }
+  }
+
+  async getStamps(): Promise<StampWithMetadata[] | undefined> {
+    return this.stampList;
+  }
+
+  async importReferences(referenceList: Reference[], batchId: string, isLocal = false) {
     const processPromises = referenceList.map(async (item: any) => {
       const mantarayRef: MantarayRef = isLocal ? item.hash : item;
       const reference = Utils.bytesToHex(mantarayRef);
@@ -100,7 +223,7 @@ export class FileManager {
         this.addToMantaray(undefined, reference, metadata);
 
         // Track imported files
-        this.importedFiles.push({ reference, name: fileName });
+        this.importedFiles.push({ reference: reference, name: fileName, batchId: batchId });
       } catch (error: any) {
         console.error(`[ERROR] Failed to process reference ${reference}: ${error.message}`);
       }
@@ -243,6 +366,24 @@ export class FileManager {
         console.log('Saving Mantaray node...');
         await this.saveMantaray(mantaray, stamp);
       }
+
+      // TODO: handle stamplist and filelist here
+      const stampIx = this.stampList.findIndex((s) => s.stamp.batchID === stamp);
+      if (stampIx === -1) {
+        const newStamp = await this.fetchStamp(stamp);
+        // TODO: what to do here ? batch should alreade be usable
+        if (newStamp === undefined) {
+          throw new Error(`Stamp not found: ${stamp}`);
+        }
+
+        this.stampList.push({ stamp: newStamp, fileReferences: [uploadResponse.reference] });
+      } else if (this.stampList[stampIx].fileReferences === undefined) {
+        this.stampList[stampIx].fileReferences = [uploadResponse.reference];
+      } else {
+        this.stampList[stampIx].fileReferences.push(uploadResponse.reference);
+      }
+
+      await this.updateStampData(stamp, this.privateKey);
 
       console.log(`File uploaded successfully: ${file}, Reference: ${uploadResponse.reference}`);
       return uploadResponse.reference;

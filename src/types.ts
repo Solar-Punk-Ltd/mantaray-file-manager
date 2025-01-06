@@ -1,11 +1,20 @@
-export interface FileMetadata {
-  reference: string;
+import { BatchId, PostageBatch, Reference } from '@ethersphere/bee-js';
+
+export interface FileWithMetadata {
+  reference: string | Reference;
   name: string;
-  batchId?: string;
+  batchId: string | BatchId;
   timestamp?: number;
   uploader?: string;
 }
 
-const feedTypes = ['sequence', 'epoch'] as const;
-export type FeedType = (typeof feedTypes)[number];
-export const DEFAULT_FEED_TYPE: FeedType = 'sequence';
+export interface StampWithMetadata {
+  stamp: PostageBatch;
+  fileReferences?: string[] | Reference[];
+  feedReference?: string | Reference;
+  nextIndex?: number;
+}
+
+export interface StampList {
+  filesOfStamps: Map<string, string[]>;
+}

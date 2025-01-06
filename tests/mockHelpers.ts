@@ -11,7 +11,7 @@ export function createMockBee() {
       console.log('Mock uploadData called');
       return Promise.resolve({ reference: 'b'.repeat(64) }); // Valid 64-character hex string
     }),
-    downloadFile: jest.fn((reference) => {
+    downloadFile: jest.fn(reference => {
       console.log(`Mock downloadFile called with reference: ${reference}`);
       return Promise.resolve({ data: Buffer.from(`Mock content for ${reference}`) });
     }),

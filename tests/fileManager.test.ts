@@ -55,7 +55,7 @@ describe('FileManager - initialize', () => {
     expect(fileManager.mantaray.addFork).toHaveBeenCalledTimes(mockPins.length);
 
     // Assert the specific calls
-    mockPins.forEach((pin) => {
+    mockPins.forEach(pin => {
       expect(fileManager.mantaray.addFork).toHaveBeenCalledWith(
         expect.any(Uint8Array), // Path (encoded from filename)
         expect.any(Uint8Array), // Reference (encoded pin)
