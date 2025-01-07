@@ -191,7 +191,7 @@ export class FileManager {
     return this.stampList;
   }
 
-  async importReferences(referenceList: Reference[], batchId: string, isLocal = false) {
+  async importReferences(referenceList: Reference[], batchId?: string, isLocal = false) {
     const processPromises = referenceList.map(async (item: any) => {
       const mantarayRef: MantarayRef = isLocal ? item.hash : item;
       const reference = Utils.bytesToHex(mantarayRef);
@@ -223,7 +223,7 @@ export class FileManager {
         this.addToMantaray(undefined, reference, metadata);
 
         // Track imported files
-        this.importedFiles.push({ reference: reference, name: fileName, batchId: batchId });
+        this.importedFiles.push({ reference: reference, name: fileName, batchId: batchId || '' });
       } catch (error: any) {
         console.error(`[ERROR] Failed to process reference ${reference}: ${error.message}`);
       }
@@ -238,7 +238,7 @@ export class FileManager {
   }
 
   async importLocalReferences(items: any) {
-    await this.importReferences(items, true);
+    await this.importReferences(items, undefined, true);
   }
 
   async downloadFile(mantaray: MantarayNode, filePath: string) {

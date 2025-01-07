@@ -1,27 +1,36 @@
+import { Utils } from '@ethersphere/bee-js';
 import { jest } from '@jest/globals';
+import { hexlify } from 'ethers';
 
 import { FileManager } from '../src/fileManager';
 import { encodePathToBytes } from '../src/utils';
 
 import { createMockBee, createMockMantarayNode } from './mockHelpers';
 
+// need var to mock the module
+var mockMantarayNode = jest.fn(() => createMockMantarayNode());
+var mockBuffer = jest.fn(() => Buffer.from('Mock file content'));
+
 jest.mock('mantaray-js', () => {
   return {
-    MantarayNode: jest.fn(() => createMockMantarayNode()),
+    MantarayNode: mockMantarayNode,
   };
 });
 
-jest.mock('fs', () => ({
-  readFileSync: jest.fn(() => Buffer.from('Mock file content')),
-}));
+jest.mock('fs', () => {
+  return {
+    readFileSync: mockBuffer,
+  };
+});
 
 describe('FileManager - initialize', () => {
   let fileManager: FileManager;
   let mockBee: any;
+  const privateKey = hexlify(Utils.keccak256Hash('pkinput'));
 
   beforeEach(() => {
     mockBee = createMockBee();
-    fileManager = new FileManager('http://localhost:1633');
+    fileManager = new FileManager('http://localhost:1633', privateKey);
     fileManager.importedFiles = [];
     jest.clearAllMocks();
   });
@@ -42,7 +51,7 @@ describe('FileManager - initialize', () => {
 
     mockBee.getAllPins.mockResolvedValue(mockPins);
 
-    const fileManager = new FileManager('http://localhost:1633');
+    const fileManager = new FileManager('http://localhost:1633', privateKey);
     fileManager.bee = mockBee; // Inject mockBee
     fileManager.mantaray = createMockMantarayNode() as any; // Inject mockMantarayNode
 
@@ -55,7 +64,7 @@ describe('FileManager - initialize', () => {
     expect(fileManager.mantaray.addFork).toHaveBeenCalledTimes(mockPins.length);
 
     // Assert the specific calls
-    mockPins.forEach(pin => {
+    mockPins.forEach((pin) => {
       expect(fileManager.mantaray.addFork).toHaveBeenCalledWith(
         expect.any(Uint8Array), // Path (encoded from filename)
         expect.any(Uint8Array), // Reference (encoded pin)
@@ -78,6 +87,7 @@ describe('FileManager - initialize', () => {
 
 describe('FileManager', () => {
   let mockBee;
+  const privateKey = hexlify(Utils.keccak256Hash('pkinput'));
 
   beforeEach(() => {
     mockBee = createMockBee();
@@ -88,14 +98,20 @@ describe('FileManager', () => {
     expect(() => new FileManager()).toThrow('Bee URL is required for initializing the FileManager.');
   });
 
+  it('should throw an error if privatekey is not provided', () => {
+    expect(() => new FileManager('http://localhost:1633')).toThrow(
+      'privateKey is required for initializing the FileManager.',
+    );
+  });
+
   it('should initialize with a valid Bee URL', () => {
-    const fileManager = new FileManager('http://localhost:1633');
+    const fileManager = new FileManager('http://localhost:1633', privateKey);
     expect(fileManager.bee).toBeTruthy();
     expect(fileManager.mantaray).toBeTruthy();
   });
 
   it('should upload a file and return its reference', async () => {
-    const fileManager = new FileManager('http://localhost:1633');
+    const fileManager = new FileManager('http://localhost:1633', privateKey);
     fileManager.bee = mockBee;
 
     const mockFilePath = 'nested-dir/file1.txt';
@@ -109,7 +125,7 @@ describe('FileManager', () => {
   });
 
   it('should add a file to the Mantaray node', () => {
-    const fileManager = new FileManager('http://localhost:1633');
+    const fileManager = new FileManager('http://localhost:1633', privateKey);
     fileManager.addToMantaray(fileManager.mantaray, 'a'.repeat(64), { Filename: '1.txt' });
 
     expect(fileManager.mantaray.addFork).toHaveBeenCalledWith(
@@ -120,7 +136,7 @@ describe('FileManager', () => {
   });
 
   it('should save a Mantaray node and return its reference', async () => {
-    const fileManager = new FileManager('http://localhost:1633');
+    const fileManager = new FileManager('http://localhost:1633', privateKey);
     fileManager.bee = mockBee;
 
     const result = await fileManager.saveMantaray(fileManager.mantaray, 'test-stamp');
@@ -131,14 +147,14 @@ describe('FileManager', () => {
   });
 
   it('should list files correctly in Mantaray', () => {
-    const fileManager = new FileManager('http://localhost:1633');
+    const fileManager = new FileManager('http://localhost:1633', privateKey);
     const files = fileManager.listFiles(fileManager.mantaray, false); // Explicitly exclude metadata
 
     expect(files).toEqual([{ path: 'file/1.txt' }, { path: 'file/2.txt' }]);
   });
 
   it('should download a specific file by path', async () => {
-    const fileManager = new FileManager('http://localhost:1633');
+    const fileManager = new FileManager('http://localhost:1633', privateKey);
     fileManager.bee = mockBee;
 
     const content = await fileManager.downloadFile(fileManager.mantaray, 'file/1.txt');
@@ -147,14 +163,14 @@ describe('FileManager', () => {
   });
 
   it('should handle missing files gracefully', async () => {
-    const fileManager = new FileManager('http://localhost:1633');
+    const fileManager = new FileManager('http://localhost:1633', privateKey);
     const mantaray = createMockMantarayNode() as any;
 
     await expect(fileManager.downloadFile(mantaray, 'file/3.txt')).rejects.toThrow('Path segment not found: 3.txt');
   });
 
   it('should handle missing forks gracefully in listFiles', () => {
-    const fileManager = new FileManager('http://localhost:1633');
+    const fileManager = new FileManager('http://localhost:1633', privateKey);
     const mantaray = { forks: null } as any;
 
     const files = fileManager.listFiles(mantaray);
@@ -162,7 +178,7 @@ describe('FileManager', () => {
   });
 
   it('should throw an error if a path segment is not found', async () => {
-    const fileManager = new FileManager('http://localhost:1633');
+    const fileManager = new FileManager('http://localhost:1633', privateKey);
     const mantaray = createMockMantarayNode() as any;
 
     jest.spyOn(fileManager, 'listFiles').mockReturnValue(['file/unknown.txt']);
@@ -173,7 +189,7 @@ describe('FileManager', () => {
   });
 
   it('should handle errors during saveMantaray', async () => {
-    const fileManager = new FileManager('http://localhost:1633');
+    const fileManager = new FileManager('http://localhost:1633', privateKey);
     fileManager.bee = mockBee;
 
     jest.spyOn(mockBee, 'uploadFile').mockRejectedValueOnce(new Error('Upload failed'));
@@ -182,7 +198,7 @@ describe('FileManager', () => {
   });
 
   it('should handle invalid file uploads gracefully', async () => {
-    const fileManager = new FileManager('http://localhost:1633');
+    const fileManager = new FileManager('http://localhost:1633', privateKey);
     const mantaray = createMockMantarayNode() as any;
 
     jest
@@ -195,7 +211,7 @@ describe('FileManager', () => {
   });
 
   it('should handle nested paths correctly in listFiles', () => {
-    const fileManager = new FileManager('http://localhost:1633');
+    const fileManager = new FileManager('http://localhost:1633', privateKey);
     const customForks = {
       nested: {
         prefix: encodePathToBytes('nested'),
@@ -221,7 +237,7 @@ describe('FileManager', () => {
   });
 
   it('should handle the case where a path does not point to a file in downloadFile', async () => {
-    const fileManager = new FileManager('http://localhost:1633');
+    const fileManager = new FileManager('http://localhost:1633', privateKey);
     const mantaray = createMockMantarayNode() as any;
 
     jest.spyOn(fileManager, 'listFiles').mockReturnValue(['file/1.txt', 'file/2.txt']);
@@ -233,7 +249,7 @@ describe('FileManager', () => {
   });
 
   it('should correctly handle download errors in downloadFiles', async () => {
-    const fileManager = new FileManager('http://localhost:1633');
+    const fileManager = new FileManager('http://localhost:1633', privateKey);
     fileManager.bee = mockBee;
 
     const mantaray = createMockMantarayNode() as any;
@@ -244,7 +260,7 @@ describe('FileManager', () => {
   });
 
   it('should ensure metadata is not duplicated in listFiles', () => {
-    const fileManager = new FileManager('http://localhost:1633');
+    const fileManager = new FileManager('http://localhost:1633', privateKey);
     const mantaray = createMockMantarayNode() as any;
 
     const files = fileManager.listFiles(mantaray, true); // Explicitly include metadata
@@ -268,7 +284,7 @@ describe('FileManager', () => {
   });
 
   it('should ensure metadata is preserved during addToMantaray', () => {
-    const fileManager = new FileManager('http://localhost:1633');
+    const fileManager = new FileManager('http://localhost:1633', privateKey);
     const mantaray = createMockMantarayNode() as any;
 
     const customMetadata = { Author: 'Test Author' };
@@ -285,7 +301,7 @@ describe('FileManager', () => {
   });
 
   it('should download all files from Mantaray', async () => {
-    const fileManager = new FileManager('http://localhost:1633');
+    const fileManager = new FileManager('http://localhost:1633', privateKey);
     fileManager.bee = mockBee;
 
     const mockForks = {
@@ -321,7 +337,7 @@ describe('FileManager', () => {
   });
 
   it('should list files correctly even when prefix is undefined', () => {
-    const fileManager = new FileManager('http://localhost:1633');
+    const fileManager = new FileManager('http://localhost:1633', privateKey);
     const mantaray = createMockMantarayNode() as any;
 
     mantaray.forks.file.prefix = undefined; // Simulate undefined prefix
@@ -334,7 +350,7 @@ describe('FileManager', () => {
   });
 
   it('should add a file to the Mantaray node with default filename', () => {
-    const fileManager = new FileManager('http://localhost:1633');
+    const fileManager = new FileManager('http://localhost:1633', privateKey);
     fileManager.addToMantaray(fileManager.mantaray, 'a'.repeat(64), {});
 
     expect(fileManager.mantaray.addFork).toHaveBeenCalledWith(
@@ -345,14 +361,14 @@ describe('FileManager', () => {
   });
 
   it('should handle missing forks gracefully in downloadFiles', async () => {
-    const fileManager = new FileManager('http://localhost:1633');
+    const fileManager = new FileManager('http://localhost:1633', privateKey);
     const mantaray = { forks: null } as any; // Simulate missing forks
 
     await expect(fileManager.downloadFiles(mantaray)).resolves.toBeUndefined();
   });
 
   it('should add metadata to Mantaray for uploaded files', async () => {
-    const fileManager = new FileManager('http://localhost:1633');
+    const fileManager = new FileManager('http://localhost:1633', privateKey);
     fileManager.bee = mockBee;
 
     const mockFilePath = 'nested-dir/file1.txt';
@@ -372,7 +388,7 @@ describe('FileManager', () => {
   });
 
   it('should use default metadata when custom metadata is not provided', async () => {
-    const fileManager = new FileManager('http://localhost:1633');
+    const fileManager = new FileManager('http://localhost:1633', privateKey);
     fileManager.bee = mockBee;
 
     const mockFilePath = 'nested-dir/file2.txt';
@@ -391,7 +407,7 @@ describe('FileManager', () => {
   });
 
   it('should return metadata with file data during download', async () => {
-    const fileManager = new FileManager('http://localhost:1633');
+    const fileManager = new FileManager('http://localhost:1633', privateKey);
     fileManager.bee = mockBee;
 
     const mockForks = {
@@ -429,7 +445,7 @@ describe('FileManager', () => {
   });
 
   it('should list files with metadata in custom forks', () => {
-    const fileManager = new FileManager('http://localhost:1633');
+    const fileManager = new FileManager('http://localhost:1633', privateKey);
     const customForks = {
       custom: {
         prefix: encodePathToBytes('custom'),
