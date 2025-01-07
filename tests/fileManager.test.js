@@ -13,7 +13,87 @@ jest.mock('fs', () => ({
   readFileSync: jest.fn(() => Buffer.from('Mock file content')),
 }));
 
-describe('FileManager - initialize', () => {
+describe('FileManager - initializeFeed', () => {
+  let fileManager;
+  let mockBee;
+
+  beforeEach(() => {
+    mockBee = createMockBee();
+    const MOCK_PRIVATE_KEY = '0x' + 'a'.repeat(64);
+    fileManager = new FileManager('http://localhost:1633', MOCK_PRIVATE_KEY);
+    fileManager.bee = mockBee;
+    fileManager.mantaray = createMockMantarayNode();
+    
+    jest.clearAllMocks();
+    console.log = jest.fn();  // Mock console.log
+    console.error = jest.fn(); // Mock console.error
+  });  
+
+  it('should create a new feed if it does not exist', async () => {
+    mockBee.downloadFile.mockRejectedValueOnce({ code: 404, message: 'feed not found' });
+
+    await expect(fileManager.initializeFeed('test-stamp')).resolves.not.toThrow();
+    expect(fileManager.mantaray).toBeDefined();
+  });
+  
+  it('should upload a file, update the feed, and fetch the correct data', async () => {
+    const filePath = 'nested-dir/file1.txt';
+  
+    // Initialize feed to set up the wallet
+    await fileManager.initializeFeed('test-stamp');
+  
+    const uploadReference = await fileManager.uploadFile(filePath, fileManager.mantaray, 'test-stamp');
+    await fileManager.saveFeed('test-stamp');
+    const fetchedReference = await fileManager.fetchFeed();
+  
+    expect(fetchedReference).toBe(uploadReference);
+  });  
+
+  it('should handle missing feed gracefully and create a new Mantaray structure', async () => {
+    mockBee.downloadFile.mockRejectedValueOnce({ code: 404, message: 'feed not found' });
+
+    await expect(fileManager.initializeFeed('test-stamp')).resolves.not.toThrow();
+    expect(fileManager.mantaray).toBeDefined();
+  });
+
+  it('should deserialize mantaray structure if feed exists', async () => {
+    const mockManifestData = Buffer.from('mock-manifest-data');
+  
+    // Mock the feed reader and downloadData response
+    mockBee.makeFeedReader().download.mockResolvedValueOnce({ reference: 'a'.repeat(64) });
+    mockBee.downloadData.mockResolvedValueOnce(mockManifestData);
+  
+    // Spy on the deserialize method of the mock mantaray node
+    const deserializeSpy = jest.spyOn(fileManager.mantaray, 'deserialize');
+  
+    await fileManager.initializeFeed('test-stamp');
+  
+    expect(mockBee.makeFeedReader().download).toHaveBeenCalled();
+    expect(mockBee.downloadData).toHaveBeenCalledWith('a'.repeat(64));
+    expect(deserializeSpy).toHaveBeenCalledWith(Buffer.from(mockManifestData));
+    expect(console.log).toHaveBeenCalledWith('Mantaray structure initialized from feed.');
+  });
+
+  it('should throw an error if wallet is not initialized in fetchFeed', async () => {
+    fileManager.wallet = undefined; // Ensure wallet is not initialized
+  
+    await expect(fileManager.fetchFeed()).rejects.toThrow(
+      'Wallet not initialized. Please call initializeFeed first.'
+    );
+  });
+
+  it('should handle errors when fetching feed fails', async () => {
+    await fileManager.initializeFeed('test-stamp'); // Ensure wallet is initialized
+  
+    const feedReader = mockBee.makeFeedReader(); // Store the returned object
+    feedReader.download.mockRejectedValueOnce(new Error('Mock download error')); // Properly mock rejection
+  
+    await expect(fileManager.fetchFeed()).rejects.toThrow('Could not fetch feed reference');
+    expect(console.error).toHaveBeenCalledWith('Failed to fetch feed:', 'Mock download error');
+  });  
+});
+
+describe('FileManager - importFileReferences', () => {
   let fileManager;
   let mockBee;
 
@@ -26,9 +106,27 @@ describe('FileManager - initialize', () => {
 
   it('should call importPinnedReferences during initialization', async () => {
     const importPinnedReferencesSpy = jest.spyOn(fileManager, 'importPinnedReferences').mockResolvedValue();
-    await fileManager.initialize();
+    await fileManager.importFileReferences();
 
     expect(importPinnedReferencesSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('should import local references when items array is provided', async () => {
+    const items = [{ hash: 'c'.repeat(64) }, { hash: 'd'.repeat(64) }];
+    const importLocalReferencesSpy = jest.spyOn(fileManager, 'importLocalReferences').mockResolvedValue();
+    
+    await fileManager.importFileReferences(items);
+    
+    expect(importLocalReferencesSpy).toHaveBeenCalledWith(items);
+    expect(console.log).toHaveBeenCalledWith('Using provided items for initialization.');
+  });
+
+  it('should log an error if importFileReferences fails', async () => {
+    jest.spyOn(fileManager, 'importLocalReferences').mockRejectedValue(new Error('Mock import error'));
+    console.error = jest.fn();
+  
+    await expect(fileManager.importFileReferences([{ hash: 'c'.repeat(64) }])).rejects.toThrow('Mock import error');
+    expect(console.error).toHaveBeenCalledWith('[ERROR] Failed to import references: Mock import error');
   });
 
   it('should add all pinned references to Mantaray during initialization', async () => {
@@ -48,7 +146,7 @@ describe('FileManager - initialize', () => {
     jest.spyOn(fileManager.mantaray, 'addFork');
 
     // Run the initialize method
-    await fileManager.initialize();
+    await fileManager.importFileReferences();
 
     // Assert the number of calls
     expect(fileManager.mantaray.addFork).toHaveBeenCalledTimes(mockPins.length);
@@ -70,7 +168,7 @@ describe('FileManager - initialize', () => {
     jest.spyOn(fileManager, 'importPinnedReferences').mockRejectedValue(new Error('Mock error during import'));
     console.error = jest.fn(); // Mock console.error
   
-    await expect(fileManager.initialize()).rejects.toThrow('Mock error during import');
+    await expect(fileManager.importFileReferences()).rejects.toThrow('Mock error during import');
     expect(console.error).toHaveBeenCalledWith('[ERROR] Failed to import references: Mock error during import');
   });  
 });
@@ -87,7 +185,7 @@ describe('FileManager', () => {
     expect(() => new FileManager()).toThrow('Bee URL is required for initializing the FileManager.');
   });
 
-  it('should initialize with a valid Bee URL', () => {
+  it('should start with a valid Bee URL', () => {
     const fileManager = new FileManager('http://localhost:1633');
     expect(fileManager.bee).toBeTruthy();
     expect(fileManager.mantaray).toBeTruthy();

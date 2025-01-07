@@ -1,31 +1,77 @@
-const { Bee } = require('@ethersphere/bee-js');
+const { Bee, Utils } = require('@ethersphere/bee-js');
+const { Wallet } = require('ethers');
 const { MantarayNode } = require('mantaray-js');
 const { getContentType, encodePathToBytes, decodeBytesToPath, hexStringToReference } = require('./utils');
 const { readFileSync } = require('fs');
 const path = require('path');
 
 class FileManager {
-  constructor(beeUrl) {
+  constructor(beeUrl, privateKey, mantarayNode) {
     if (!beeUrl) {
       throw new Error('Bee URL is required for initializing the FileManager.');
     }
     console.log('Initializing Bee client...');
     this.bee = new Bee(beeUrl);
-    this.mantaray = new MantarayNode();
-    this.importedFiles = [];
-
-    // Create personalized feed
-  } 
-
-  async intializeMantarayUsingFeed() {
-    //
-  }
-
-  async loadMantaray(manifestReference) {
-    this.mantaray = mantaray.load(manifestReference, downloadFile)
+    this.mantaray = mantarayNode || new MantarayNode();
+    this.privateKey = privateKey; // Store privateKey for later use in initializeFeed
+    this.topic = Utils.hexToBytes('00'.repeat(32)); // Feed topic with a specific convention
   }
   
-  async initialize(items) {
+  async initializeFeed(stamp) {
+    console.log('Initializing wallet and checking for existing feed...');
+  
+    // Initialize wallet
+    this.wallet = new Wallet(this.privateKey);
+  
+    const reader = this.bee.makeFeedReader('sequence', this.topic, this.wallet.address);
+  
+    try {
+      const { reference } = await reader.download();
+      console.log(`Existing feed found. Reference: ${reference}`);
+  
+      const manifestData = await this.bee.downloadData(reference);
+      this.mantaray.deserialize(Buffer.from(manifestData));
+      console.log('Mantaray structure initialized from feed.');
+    } catch (error) {
+      console.log('No existing feed found. Initializing new Mantaray structure...');
+      this.mantaray = new MantarayNode();
+      await this.saveFeed(stamp); // Pass stamp explicitly
+    }
+  }  
+  
+  async saveFeed(stamp) {
+    console.log('Saving Mantaray structure to feed...');
+    
+    const manifestReference = await this.mantaray.save(async (data) => {
+      const uploadResponse = await this.bee.uploadData(stamp, data);
+      return hexStringToReference(uploadResponse.reference);
+    });
+  
+    const writer = this.bee.makeFeedWriter('sequence', this.topic, this.wallet.privateKey);
+    await writer.upload(stamp, manifestReference);
+    
+    console.log(`Feed updated with reference: ${Buffer.from(manifestReference).toString('hex')}`);
+  }  
+
+  async fetchFeed() {
+    console.log('Fetching the latest feed reference...');
+    
+    if (!this.wallet) {
+      throw new Error('Wallet not initialized. Please call initializeFeed first.');
+    }
+  
+    const reader = this.bee.makeFeedReader('sequence', this.topic, this.wallet.address);
+    try {
+      const { reference } = await reader.download();
+      console.log(`Latest feed reference fetched: ${reference}`);
+      return reference;
+    } catch (error) {
+      console.error('Failed to fetch feed:', error.message);
+      throw new Error('Could not fetch feed reference.');
+    }
+  }
+
+  async importFileReferences(items) {
     console.log('Importing references...');
     try {
       if (items) {
@@ -72,9 +118,6 @@ class FileManager {
         console.log(`Adding Reference: ${reference} as ${fileName}`);
         // Add the file to the Mantaray node with enriched metadata
         this.addToMantaray(undefined, binaryReference, metadata);
-  
-        // Track imported files
-        this.importedFiles.push({ reference, filename: fileName });
       } catch (error) {
         console.error(`[ERROR] Failed to process reference ${reference}: ${error.message}`);
       }
@@ -251,6 +294,64 @@ class FileManager {
     return hexReference;
   }
   
+  searchFilesByName(fileNameQuery, includeMetadata = false) {
+    console.log(`Searching for files by name: ${fileNameQuery}`);
+
+    // Use the listFiles function to get all files in the trie
+    const allFiles = this.listFiles(this.mantaray, includeMetadata);
+
+    // Filter files whose paths include the query
+    const filteredFiles = allFiles.filter((file) =>
+        path.posix.basename(file.path).includes(fileNameQuery)
+    );
+
+    return filteredFiles;
+  }
+
+  searchFiles({ fileName, directory, metadata, minSize, maxSize, extension }, includeMetadata = false) {
+    let results = this.listFiles(this.mantaray, true);
+
+    if (fileName) {
+        results = results.filter((file) =>
+            path.posix.basename(file.path).includes(fileName)
+        );
+    }
+
+    if (directory) {
+        results = results.filter((file) =>
+            path.posix.dirname(file.path).includes(directory)
+        );
+    }
+
+    if (metadata) {
+        results = results.filter((file) => {
+            for (const [key, value] of Object.entries(metadata)) {
+                if (file.metadata?.[key] !== value) {
+                    return false;
+                }
+            }
+            return true;
+        });
+    }
+
+    if (minSize !== undefined && maxSize !== undefined) {
+        results = results.filter((file) => {
+            const size = parseInt(file.metadata?.['Content-Size'], 10);
+            return size >= minSize && size <= maxSize;
+        });
+    }
+
+    if (extension) {
+        results = results.filter((file) =>
+            path.posix.extname(file.path) === extension
+        );
+    }
+
+    return results.map((file) =>
+        includeMetadata ? file : { path: file.path }
+    );
+  }
+
   listFiles(mantaray, includeMetadata = false) {
     mantaray = mantaray || this.mantaray;
     console.log('Listing files in Mantaray...');
@@ -264,17 +365,20 @@ class FileManager {
   
       if (!forks) continue;
   
+      // Process forks
       for (const [key, fork] of Object.entries(forks)) {
-        const prefix = fork.prefix ? decodeBytesToPath(fork.prefix) : key || 'unknown';
-        const fullPath = path.join(currentPath, prefix);
+        // Decode prefix only if necessary
+        const decodedPrefix = fork.prefix ? decodeBytesToPath(fork.prefix) : key || 'unknown';
+        const fullPath = path.join(currentPath, decodedPrefix); // Use `path.join` for consistency
   
+        // If this node represents a file
         if (fork.node.isValueType()) {
           const metadata = fork.node.metadata || {};
           let originalPath = fullPath;
   
           if (metadata['Custom-Metadata']) {
             try {
-              const customMetadata = JSON.parse(metadata['Custom-Metadata']);
+              const customMetadata = JSON.parse(metadata['Custom-Metadata']); // Ensure metadata is parsed correctly
               originalPath = customMetadata.fullPath || fullPath;
             } catch (e) {
               console.warn(`Invalid metadata JSON for ${fullPath}, using default path.`);
@@ -282,12 +386,15 @@ class FileManager {
           }
   
           const fileEntry = { path: originalPath };
+  
+          // Include metadata only if requested
           if (includeMetadata) {
             fileEntry.metadata = metadata;
           }
   
           fileList.push(fileEntry);
         } else {
+          // Recurse into subdirectories
           stack.push({ node: fork.node, path: fullPath });
         }
       }
@@ -309,97 +416,88 @@ class FileManager {
     return wrappedStructure;
 }
 
-buildDirectoryStructure(mantaray) {
-    mantaray = mantaray || this.mantaray;
-    console.log('Building raw directory structure...');
+  buildDirectoryStructure(mantaray) {
+      mantaray = mantaray || this.mantaray;
+      console.log('Building raw directory structure...');
 
-    const structure = {};
-    const fileList = this.listFiles(mantaray);
+      const structure = {};
+      const fileList = this.listFiles(mantaray);
 
-    for (const file of fileList) {
-        const filePath = file.path;
-        const relativePath = path.posix.normalize(filePath); 
-        const dirPath = path.posix.dirname(relativePath);
-        const fileName = path.posix.basename(relativePath);
+      for (const file of fileList) {
+          const filePath = file.path;
+          const relativePath = path.posix.normalize(filePath); 
+          const dirPath = path.posix.dirname(relativePath);
+          const fileName = path.posix.basename(relativePath);
 
-        let currentDir = structure;
-        if (dirPath === '.' || dirPath === '') {
-            currentDir[fileName] = null;
-        } else {
-            const dirParts = dirPath.split('/');
-            for (const dir of dirParts) {
-                if (!currentDir[dir]) {
-                    currentDir[dir] = {};
-                }
-                currentDir = currentDir[dir];
-            }
+          let currentDir = structure;
+          if (dirPath === '.' || dirPath === '') {
+              currentDir[fileName] = null;
+          } else {
+              const dirParts = dirPath.split('/');
+              for (const dir of dirParts) {
+                  if (!currentDir[dir]) {
+                      currentDir[dir] = {};
+                  }
+                  currentDir = currentDir[dir];
+              }
 
-            currentDir[fileName] = null;
-        }
-    }
+              currentDir[fileName] = null;
+          }
+      }
 
-    return structure;
-}
+      return structure;
+  }
 
+  getContentsOfDirectory(targetPath, mantaray, rootDirName ) {
+      mantaray = mantaray || this.mantaray;
 
+    
+      const directoryStructure = this.getDirectoryStructure(mantaray, rootDirName);
 
+      if (targetPath === rootDirName || targetPath === '.') {
+          const rootContents = Object.keys(directoryStructure[rootDirName] || {});
+          console.log(`Contents of root directory '${rootDirName}':`, rootContents);
+          return rootContents;
+      }
 
+      const normalizedTargetPath = path.posix.normalize(targetPath);
 
-getContentsOfDirectory(targetPath, mantaray, rootDirName ) {
-    mantaray = mantaray || this.mantaray;
+      const rootDirectory = directoryStructure[rootDirName];
+      if (!rootDirectory) {
+          console.error(`[ERROR] Root directory '${rootDirName}' not found.`);
+          return [];
+      }
 
-   
-    const directoryStructure = this.getDirectoryStructure(mantaray, rootDirName);
+      // Recursive helper function to locate the target directory
+      const findDirectory = (currentDir, currentPath) => {
+          if (currentPath === normalizedTargetPath || currentPath === `./${normalizedTargetPath}`) {
+              return currentDir; 
+          }
 
-    if (targetPath === rootDirName || targetPath === '.') {
-        const rootContents = Object.keys(directoryStructure[rootDirName] || {});
-        console.log(`Contents of root directory '${rootDirName}':`, rootContents);
-        return rootContents;
-    }
+          for (const key in currentDir) {
+              const newPath = path.posix.join(currentPath, key);
 
-    const normalizedTargetPath = path.posix.normalize(targetPath);
+              if (typeof currentDir[key] === 'object') {
+                  const result = findDirectory(currentDir[key], newPath);
+                  if (result) return result; 
+              }
+          }
 
-    const rootDirectory = directoryStructure[rootDirName];
-    if (!rootDirectory) {
-        console.error(`[ERROR] Root directory '${rootDirName}' not found.`);
-        return [];
-    }
+          return null; 
+      };
 
-    // Recursive helper function to locate the target directory
-    const findDirectory = (currentDir, currentPath) => {
-        if (currentPath === normalizedTargetPath || currentPath === `./${normalizedTargetPath}`) {
-            return currentDir; 
-        }
+      const targetDirectory = findDirectory(rootDirectory, '');
 
-        for (const key in currentDir) {
-            const newPath = path.posix.join(currentPath, key);
+      if (!targetDirectory) {
+          console.error(`[ERROR] Directory not found: ${targetPath}`);
+          return [];
+      }
 
-            if (typeof currentDir[key] === 'object') {
-                const result = findDirectory(currentDir[key], newPath);
-                if (result) return result; 
-            }
-        }
+      const contents = Object.keys(targetDirectory);
+      console.log(`Contents of '${targetPath}':`, contents);
 
-        return null; 
-    };
-
-    const targetDirectory = findDirectory(rootDirectory, '');
-
-    if (!targetDirectory) {
-        console.error(`[ERROR] Directory not found: ${targetPath}`);
-        return [];
-    }
-
-    const contents = Object.keys(targetDirectory);
-    console.log(`Contents of '${targetPath}':`, contents);
-
-    return contents;
-}
-
-
-
-  
-  
+      return contents;
+  }
 }
 
 module.exports = FileManager;

@@ -22,6 +22,7 @@
   "dependencies": {
     "@ethersphere/bee-js": "^8.3.1",
     "bee-js": "^1.0.2",
+    "ethers": "^6.13.5",
     "mantaray-js": "^1.0.3"
   },
   "devDependencies": {
