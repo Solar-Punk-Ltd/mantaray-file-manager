@@ -3,7 +3,7 @@ import { readFileSync } from 'fs';
 import { MantarayNode, MetadataMapping, Reference as MantarayRef } from 'mantaray-js';
 import path from 'path';
 
-import { DEFAULT_FEED_TYPE, STAMP_LIST_TOIC } from './constants';
+import { DEFAULT_FEED_TYPE, STAMP_LIST_TOPIC } from './constants';
 import { FileWithMetadata, StampList, StampWithMetadata } from './types';
 import { encodePathToBytes, getContentType } from './utils';
 
@@ -86,7 +86,7 @@ export class FileManager {
   async updateStampData(stamp: string | BatchId, privateKey: string): Promise<void> {
     const feedWriter = this.bee.makeFeedWriter(
       DEFAULT_FEED_TYPE,
-      STAMP_LIST_TOIC,
+      STAMP_LIST_TOPIC,
       privateKey /*, { headers: { encrypt: "true" } }*/,
     );
     try {
@@ -114,7 +114,7 @@ export class FileManager {
     }
 
     // TODO: stamps of other users -> feature to fetch other nodes' stamp data
-    const feedReader = this.bee.makeFeedReader(DEFAULT_FEED_TYPE, STAMP_LIST_TOIC, this.privateKey);
+    const feedReader = this.bee.makeFeedReader(DEFAULT_FEED_TYPE, STAMP_LIST_TOPIC, this.privateKey);
     try {
       const latestFeedData = await feedReader.download();
       this.nextStampFeedIndex = latestFeedData.feedIndexNext;
