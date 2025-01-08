@@ -5,7 +5,7 @@
     "module": "ESNext",
     "resolveJsonModule": true,
     "moduleResolution": "node",
-    "types": ["node"],
+    "types": ["node", "jest"],
     "skipLibCheck": true,
     "declaration": true,
     "declarationMap": true,
@@ -25,6 +25,6 @@
       "@ethersphere/bee-js": ["node_modules/@ethersphere/bee-js/dist/types/index.d.ts"]
     }
   },
-  "include": ["src"],
+  "include": ["src", "tests", "**/*.test.ts"],
   "exclude": ["node_modules", "dist"]
 }
