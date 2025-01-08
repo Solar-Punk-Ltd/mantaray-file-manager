@@ -6,6 +6,7 @@ import path from 'path';
 import { DEFAULT_FEED_TYPE, STAMP_LIST_TOPIC } from './constants';
 import { FileWithMetadata, StampList, StampWithMetadata } from './types';
 import { encodePathToBytes, getContentType } from './utils';
+import { Wallet } from 'ethers';
 
 export class FileManager {
   // TODO: private vars
@@ -16,6 +17,7 @@ export class FileManager {
   private stampList: StampWithMetadata[];
   private nextStampFeedIndex: string;
   private privateKey: string;
+  private address: string;
 
   constructor(beeUrl: string, privateKey: string) {
     if (!beeUrl) {
@@ -29,6 +31,8 @@ export class FileManager {
     this.stampList = [];
     this.nextStampFeedIndex = '';
     this.privateKey = privateKey;
+    this.address = new Wallet(privateKey).address;
+
     this.mantaray = new MantarayNode();
     this.importedFiles = [];
 
@@ -114,7 +118,8 @@ export class FileManager {
     }
 
     // TODO: stamps of other users -> feature to fetch other nodes' stamp data
-    const feedReader = this.bee.makeFeedReader(DEFAULT_FEED_TYPE, STAMP_LIST_TOPIC, this.privateKey);
+    const topicHex = this.bee.makeFeedTopic(STAMP_LIST_TOPIC);
+    const feedReader = this.bee.makeFeedReader(DEFAULT_FEED_TYPE, topicHex, this.address);
     try {
       const latestFeedData = await feedReader.download();
       this.nextStampFeedIndex = latestFeedData.feedIndexNext;
