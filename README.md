@@ -3,6 +3,16 @@
 This script uploads a directory structure to the Bee network using Mantaray as a manifest node. It lists files, saves a manifest, and allows downloading files.
 
 ---
+TODO:
+1. upon startup: read all usable stamps
+2. read stamp list feed for batchIDs and file refs
+3. read locally saved file ref list -> metadata file for displaying file info (every upload: new mantary: fork of metadata + fork of file data)
+4. compare usable stamps and files with the ones on the feed -> update the stamps feed with expired stamps
+5. donwload available files from the feed with the given batchIds
+6. save/update the file list locally
+7. save/update the file list on swarm
+8. ACT
+---
 
 ## Prerequisites
 
@@ -89,7 +99,7 @@ npm start
 
 #### 3. **Postage Stamp Expired**
    - **Error:** Uploads fail due to insufficient funds or expired postage stamps.
-   - **Solution:** 
+   - **Solution:**
      - Purchase a new postage stamp using:
        ```bash
        curl -s -X POST http://localhost:1635/stamps/1000000/20
@@ -98,7 +108,7 @@ npm start
 
 #### 4. **Permission Denied**
    - **Error:** Files or directories in `nested-dir` cannot be read.
-   - **Solution:** 
+   - **Solution:**
      - Ensure all files have read permissions:
        ```bash
        chmod -R 755 nested-dir
@@ -106,7 +116,7 @@ npm start
 
 #### 5. **Bee Node Crashes or Becomes Unresponsive**
    - **Error:** The Bee node stops unexpectedly during the upload or download process.
-   - **Solution:** 
+   - **Solution:**
      - Restart the Bee node:
        ```bash
        bee dev --cors-allowed-origins="*"
