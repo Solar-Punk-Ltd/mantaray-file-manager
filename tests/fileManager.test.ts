@@ -1,4 +1,4 @@
-import { Bee, PostageBatch, Reference, Utils } from '@ethersphere/bee-js';
+import { Bee, Reference, Utils } from '@ethersphere/bee-js';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { hexlify } from 'ethers';
 
@@ -35,11 +35,6 @@ describe('FileManager - initialize', () => {
 
   it('should call importPinnedReferences during initialization', async () => {
     const importPinnedReferencesSpy = jest.spyOn(fileManager, 'importPinnedReferences').mockResolvedValue();
-    
-    fileManager['stampList'] = [ 
-      { stamp: "6e26e6c31623bfcfa1df4140a98286cd27bcd84c628d6fafd63757ba8d706a6c" as unknown as PostageBatch },
-      { stamp: "6e26e6c31623bfcfa1df4140a98286cd27bcd84c628d6fafd63757ba8d706a6c" as unknown as PostageBatch }
-    ];
     
     await fileManager.initialize(undefined);
 
