@@ -1,14 +1,25 @@
-import { BatchId, Bee, PostageBatch, Reference, Utils } from '@ethersphere/bee-js';
+import {
+  BatchId,
+  Bee,
+  Data,
+  PostageBatch,
+  Reference,
+  Utils,
+  REFERENCE_HEX_LENGTH,
+  GranteesResult,
+  PssSubscription,
+} from '@ethersphere/bee-js';
 import { readFileSync } from 'fs';
 import { MantarayNode, MetadataMapping, Reference as MantarayRef } from 'mantaray-js';
 import path from 'path';
 
-import { DEFAULT_FEED_TYPE, STAMP_LIST_TOIC } from './constants';
-import { FileWithMetadata, StampList, StampWithMetadata } from './types';
-import { encodePathToBytes, getContentType } from './utils';
+import { DEFAULT_FEED_TYPE, STAMP_LIST_TOIC, SHARED_INBOX_TOPIC } from './constants';
+import { FileWithMetadata, GranteeList, StampList, SharedMessage, StampWithMetadata } from './types';
+import { assertSharedMessage, encodePathToBytes, getContentType } from './utils';
 
 export class FileManager {
   // TODO: private vars
+  // TODO: store shared refs and own files in the same array ?
   public bee: Bee;
   public mantaray: MantarayNode;
   public importedFiles: FileWithMetadata[];
@@ -16,6 +27,9 @@ export class FileManager {
   private stampList: StampWithMetadata[];
   private nextStampFeedIndex: string;
   private privateKey: string;
+  private granteeList: GranteeList;
+  private sharedWithMe: SharedMessage[];
+  private sharedSubscription: PssSubscription;
 
   constructor(beeUrl: string, privateKey: string) {
     if (!beeUrl) {
@@ -24,6 +38,7 @@ export class FileManager {
     if (!privateKey) {
       throw new Error('privateKey is required for initializing the FileManager.');
     }
+
     console.log('Initializing Bee client...');
     this.bee = new Bee(beeUrl);
     this.stampList = [];
@@ -31,12 +46,20 @@ export class FileManager {
     this.privateKey = privateKey;
     this.mantaray = new MantarayNode();
     this.importedFiles = [];
-
-    // Create personalized feed
+    this.granteeList = { filesSharedWith: new Map<string, string[]>() };
+    this.sharedWithMe = [];
+    this.sharedSubscription = {} as PssSubscription;
   }
 
   // TODO: use allSettled for file fetching and only save the ones that are successful
   async initialize(items: any | undefined) {
+    try {
+      // TODO: is await needed ?
+      this.sharedSubscription = await this.subscribeToSharedInbox();
+    } catch (error: any) {
+      console.log('Error during shared inbox subscription: ', error);
+    }
+
     console.log('Importing stamps and references...');
     try {
       await this.initStamps();
@@ -223,7 +246,8 @@ export class FileManager {
         this.addToMantaray(undefined, reference, metadata);
 
         // Track imported files
-        this.importedFiles.push({ reference: reference, name: fileName, batchId: batchId || '' });
+        // TODO: shared flag
+        this.importedFiles.push({ reference: reference, name: fileName, batchId: batchId || '', shared: false });
       } catch (error: any) {
         console.error(`[ERROR] Failed to process reference ${reference}: ${error.message}`);
       }
@@ -567,5 +591,140 @@ export class FileManager {
     console.log(`Contents of '${targetPath}':`, contents);
 
     return contents;
+  }
+
+  // fetches the list of grantees under the given reference
+  async getGrantees(eGlRef: string | Reference): Promise<string[] | undefined> {
+    if (eGlRef.length !== REFERENCE_HEX_LENGTH) {
+      console.error('Invalid reference: ', eGlRef);
+      return;
+    }
+
+    try {
+      // TODO: parse data as ref array
+      const grantResult = await this.bee.getGrantees(eGlRef);
+      const grantees = grantResult.data;
+      console.log('Grantees fetched: ', grantees);
+      return grantees;
+    } catch (error: any) {
+      console.error(`Failed to get share grantee list: ${error}`);
+      return undefined;
+    }
+  }
+  // TODO: cache and search locally or on swarm ?
+  // async getGranteesForFile(fileRef: string | Reference): Promise<string[] | undefined> {
+  //   try {
+  //     const file = this.importedFiles.find((f) => f.reference === fileRef);
+  //     if (!file) {
+  //       console.error('File not found: ', fileRef);
+  //       return undefined;
+  //     }
+
+  //     const fileGrantees = this.granteeList.find((g) => g.filesSharedWith[fileRef]);
+  //     if (!fileGrantees) {
+  //       console.error('No grantees found for file: ', fileRef);
+  //       return undefined;
+  //     }
+
+  //     const grantees = fileGrantees.filesSharedWith[fileRef];
+  //     console.log('Grantees for file fetched: ', grantees);
+  //     return grantees;
+  //   } catch (error: any) {
+  //     console.error(`Failed to get share grantee list for file${fileRef}\n: ${error}`);
+  //     return undefined;
+  //   }
+  // }
+
+  // TODO: separate revoke function or frontend will handle it by creating a new act ?
+  // TODO: create a feed just like for the stamps to store the grantee list refs
+  // TODO: create a feed for the share access that can be read by each grantee
+  // TODO: notify user if it has been granted access by someone else
+  // TODO: history handling ?
+  // updates the list of grantees who can access the file reference under the history reference
+  async handleGrantees(
+    batchId: string | BatchId,
+    fileRef: string,
+    grantees: {
+      add?: string[];
+      revoke?: string[];
+    },
+    historyRef: string | Reference,
+    eGlRef?: string | Reference,
+  ): Promise<GranteesResult | undefined> {
+    console.log('Allowing grantees to share files with me');
+
+    try {
+      let grantResult: GranteesResult;
+      if (eGlRef !== undefined && eGlRef.length === REFERENCE_HEX_LENGTH) {
+        grantResult = await this.bee.patchGrantees(batchId, eGlRef, historyRef, grantees);
+        console.log('Access patched, grantee list reference: ', grantResult.ref);
+      } else {
+        if (grantees.add === undefined || grantees.add.length === 0) {
+          console.error('No grantees specified.');
+          return undefined;
+        }
+
+        grantResult = await this.bee.createGrantees(batchId, grantees.add);
+        console.log('Access granted, new grantee list reference: ', grantResult.ref);
+      }
+
+      const currentGrantees = this.granteeList.filesSharedWith.get(fileRef) || [];
+      const newGrantees = [...new Set([...currentGrantees, ...(grantees.add || []), ...(grantees.revoke || [])])];
+      this.granteeList.filesSharedWith.set(fileRef, newGrantees);
+      return grantResult;
+    } catch (error: any) {
+      console.error(`Failed to grant share access: ${error}`);
+      return undefined;
+    }
+  }
+
+  async subscribeToSharedInbox(): Promise<PssSubscription> {
+    const subscription = this.bee.pssSubscribe(SHARED_INBOX_TOPIC, {
+      onMessage: async (message) => {
+        console.log('Received shared inbox message: ', message);
+        assertSharedMessage(message);
+        this.sharedWithMe.push(message);
+      },
+      onError: (e) => {
+        console.log('Error received in shared inbox: ', e.message);
+        throw e;
+      },
+    });
+
+    return subscription;
+  }
+
+  // recipient is optional, if not provided the message will be broadcasted == pss public key
+  async shareItem(batchId: string, targetOverlay: string, message: SharedMessage, recipient: string): Promise<void> {
+    try {
+      const target = Utils.makeMaxTarget(targetOverlay);
+      const msgData = new Uint8Array(Buffer.from(JSON.stringify(message)));
+      await this.bee.pssSend(batchId, SHARED_INBOX_TOPIC, target, msgData, recipient);
+    } catch (error: any) {
+      console.log('Failed to share item: ', error);
+    }
+  }
+
+  async downloadSharedItem(reference: string): Promise<Data | undefined> {
+    if (!this.sharedWithMe.find((msg) => msg.references.includes(reference))) {
+      console.log('Cannot find reference in shared messages: ', reference);
+      return undefined;
+    }
+
+    try {
+      const data = await this.bee.downloadFile(reference);
+      return data.data;
+    } catch (error: any) {
+      console.error(`Failed to download shared file ${reference}\n: ${error}`);
+      return undefined;
+    }
+  }
+
+  // TODO: do we need to cancel sub at shutdown ?
+  unsubscribeFromSharedInbox() {
+    if (this.sharedSubscription) {
+      console.log('Unsubscribed from shared inbox, topic: ', this.sharedSubscription.topic);
+      this.sharedSubscription.cancel();
+    }
   }
 }
