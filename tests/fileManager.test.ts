@@ -69,7 +69,7 @@ describe('FileManager - initialize', () => {
         expect.any(Uint8Array), // Reference (encoded pin)
         expect.objectContaining({
           Filename: `pinned-${pin.substring(0, 6)}`,
-          pinned: true,
+          pinned: "true",
         }),
       );
     });
