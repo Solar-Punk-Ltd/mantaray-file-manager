@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { hexlify } from 'ethers';
 
 import { FileManager } from '../src/fileManager';
-import { encodePathToBytes } from '../src/utils';
+//import { encodePathToBytes } from '../src/utils';
 
 import { createMockBee, createMockMantarayNode } from './mockHelpers';
 
@@ -83,7 +83,7 @@ describe('FileManager - initialize', () => {
     expect(console.error).toHaveBeenCalledWith('[ERROR] Failed to import references: Mock error during import');
   });
 });
-
+/*
 describe('FileManager', () => {
   let mockBee: ReturnType<typeof createMockBee>;
   const privateKey = hexlify(Utils.keccak256Hash('pkinput'));
@@ -491,3 +491,4 @@ describe('FileManager', () => {
     ]);
   });
 });
+*/

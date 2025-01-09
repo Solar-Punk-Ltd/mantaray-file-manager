@@ -205,7 +205,7 @@ export class FileManager {
 
         // Download the file to extract its metadata
         const fileData = await this.bee.downloadFile(reference);
-        const content = Buffer.from(fileData.data || '');
+        const content = Buffer.from(fileData.data.toString() || '');
         const fileName = fileData.name || `pinned-${reference.substring(0, 6)}`;
         const contentType = fileData.contentType || 'application/octet-stream';
         const contentSize = content.length;
