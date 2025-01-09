@@ -198,8 +198,7 @@ export class FileManager {
 
   async importReferences(referenceList: Reference[], batchId?: string, isLocal = false) {
     const processPromises = referenceList.map(async (item: any) => {
-      const mantarayRef: MantarayRef = isLocal ? item.hash : item;
-      const reference = Utils.bytesToHex(mantarayRef);
+      const reference: Reference = isLocal ? item.hash : item;
       try {
         console.log(`Processing reference: ${reference}`);
 
