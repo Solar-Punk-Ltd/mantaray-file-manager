@@ -50,13 +50,13 @@ export function createMockBee(): Partial<Bee> {
         download: jest.fn().mockResolvedValue({
           reference: 'c'.repeat(64) as Reference,
           feedIndexNext: 1,
-        })
+        }),
       };
     }),
 
     makeFeedTopic: jest.fn(() => {
       console.log('Mock makeFeedTopic called');
-      return "0000000000000000000000000000000000000000000000000000000000000000" as Topic;
+      return '0000000000000000000000000000000000000000000000000000000000000000' as Topic;
     }),
 
     url: 'http://localhost:1633',

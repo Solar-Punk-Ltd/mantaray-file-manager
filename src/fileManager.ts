@@ -1,12 +1,12 @@
 import { BatchId, Bee, PostageBatch, Reference, Utils } from '@ethersphere/bee-js';
+import { MantarayNode, MetadataMapping, Reference as MantarayRef } from '@solarpunkltd/mantaray-js';
+import { Wallet } from 'ethers';
 import { readFileSync } from 'fs';
-import { MantarayNode, MetadataMapping, Reference as MantarayRef } from 'mantaray-js';
 import path from 'path';
 
 import { DEFAULT_FEED_TYPE, STAMP_LIST_TOPIC } from './constants';
 import { FileWithMetadata, StampList, StampWithMetadata } from './types';
 import { encodePathToBytes, getContentType } from './utils';
-import { Wallet } from 'ethers';
 
 export class FileManager {
   // TODO: private vars
