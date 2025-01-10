@@ -2,19 +2,20 @@ import {
   BatchId,
   Bee,
   Data,
-  PostageBatch,
-  Reference,
-  Utils,
-  REFERENCE_HEX_LENGTH,
   GranteesResult,
+  PostageBatch,
   PssSubscription,
+  Reference,
+  REFERENCE_HEX_LENGTH,
+  Utils,
 } from '@ethersphere/bee-js';
+import { MantarayNode, MetadataMapping, Reference as MantarayRef } from '@solarpunkltd/mantaray-js';
+import { Wallet } from 'ethers';
 import { readFileSync } from 'fs';
-import { MantarayNode, MetadataMapping, Reference as MantarayRef } from 'mantaray-js';
 import path from 'path';
 
-import { DEFAULT_FEED_TYPE, STAMP_LIST_TOIC, SHARED_INBOX_TOPIC } from './constants';
-import { FileWithMetadata, GranteeList, StampList, SharedMessage, StampWithMetadata } from './types';
+import { DEFAULT_FEED_TYPE, SHARED_INBOX_TOPIC, STAMP_LIST_TOPIC } from './constants';
+import { FileWithMetadata, GranteeList, SharedMessage, StampList, StampWithMetadata } from './types';
 import { assertSharedMessage, encodePathToBytes, getContentType } from './utils';
 
 export class FileManager {
@@ -30,6 +31,7 @@ export class FileManager {
   private granteeList: GranteeList;
   private sharedWithMe: SharedMessage[];
   private sharedSubscription: PssSubscription;
+  private address: string;
 
   constructor(beeUrl: string, privateKey: string) {
     if (!beeUrl) {
@@ -44,6 +46,8 @@ export class FileManager {
     this.stampList = [];
     this.nextStampFeedIndex = '';
     this.privateKey = privateKey;
+    this.address = new Wallet(privateKey).address;
+
     this.mantaray = new MantarayNode();
     this.importedFiles = [];
     this.granteeList = { filesSharedWith: new Map<string, string[]>() };
@@ -107,9 +111,10 @@ export class FileManager {
   // TODO: encrypt
   // TODO: how and how long to store the stamps feed data ?
   async updateStampData(stamp: string | BatchId, privateKey: string): Promise<void> {
+    const topicHex = this.bee.makeFeedTopic(STAMP_LIST_TOPIC);
     const feedWriter = this.bee.makeFeedWriter(
       DEFAULT_FEED_TYPE,
-      STAMP_LIST_TOIC,
+      topicHex,
       privateKey /*, { headers: { encrypt: "true" } }*/,
     );
     try {
@@ -137,7 +142,9 @@ export class FileManager {
     }
 
     // TODO: stamps of other users -> feature to fetch other nodes' stamp data
-    const feedReader = this.bee.makeFeedReader(DEFAULT_FEED_TYPE, STAMP_LIST_TOIC, this.privateKey);
+
+    const topicHex = this.bee.makeFeedTopic(STAMP_LIST_TOPIC);
+    const feedReader = this.bee.makeFeedReader(DEFAULT_FEED_TYPE, topicHex, this.address);
     try {
       const latestFeedData = await feedReader.download();
       this.nextStampFeedIndex = latestFeedData.feedIndexNext;
@@ -216,14 +223,13 @@ export class FileManager {
 
   async importReferences(referenceList: Reference[], batchId?: string, isLocal = false) {
     const processPromises = referenceList.map(async (item: any) => {
-      const mantarayRef: MantarayRef = isLocal ? item.hash : item;
-      const reference = Utils.bytesToHex(mantarayRef);
+      const reference: Reference = isLocal ? item.hash : item;
       try {
         console.log(`Processing reference: ${reference}`);
 
         // Download the file to extract its metadata
         const fileData = await this.bee.downloadFile(reference);
-        const content = Buffer.from(fileData.data || '');
+        const content = Buffer.from(fileData.data.toString() || '');
         const fileName = fileData.name || `pinned-${reference.substring(0, 6)}`;
         const contentType = fileData.contentType || 'application/octet-stream';
         const contentSize = content.length;

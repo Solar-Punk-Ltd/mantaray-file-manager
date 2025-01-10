@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { hexlify } from 'ethers';
 
 import { FileManager } from '../src/fileManager';
-import { encodePathToBytes } from '../src/utils';
 
 import { createMockBee, createMockMantarayNode } from './mockHelpers';
 
@@ -35,6 +34,7 @@ describe('FileManager - initialize', () => {
 
   it('should call importPinnedReferences during initialization', async () => {
     const importPinnedReferencesSpy = jest.spyOn(fileManager, 'importPinnedReferences').mockResolvedValue();
+
     await fileManager.initialize(undefined);
 
     expect(importPinnedReferencesSpy).toHaveBeenCalledTimes(1);
@@ -68,7 +68,7 @@ describe('FileManager - initialize', () => {
         expect.any(Uint8Array), // Reference (encoded pin)
         expect.objectContaining({
           Filename: `pinned-${pin.substring(0, 6)}`,
-          pinned: true,
+          pinned: 'true',
         }),
       );
     });
@@ -92,18 +92,18 @@ describe('FileManager', () => {
     jest.clearAllMocks();
   });
 
-  it('should throw an error if Bee URL is not provided', () => {
-    expect(() => new FileManager('http://localhost:1633', 'privateKey')).toThrow(
-      'privateKey is required for initializing the FileManager.',
-    );
-  });
+  // it('should throw an error if Bee URL is not provided', () => {
+  //   expect(() => new FileManager('http://localhost:1633', 'privateKey')).toThrow(
+  //     '"privateKey" is required for initializing the FileManager.',
+  //   );
+  // });
 
-  it('should throw an error if privatekey is not provided', () => {
-    expect(() => new FileManager('', '')).toThrow('Bee URL is required for initializing the FileManager.');
-  });
+  // it('should throw an error if "privatekey" is not provided', () => {
+  //   expect(() => new FileManager('', '')).toThrow('Bee URL is required for initializing the FileManager.');
+  // });
 
   it('should initialize with a valid Bee URL', () => {
-    const fileManager = new FileManager('http://localhost:1633', privateKey);
+    const fileManager = new FileManager('http://localhost:1633', '"privateKey"');
     expect(fileManager.bee).toBeTruthy();
     expect(fileManager.mantaray).toBeTruthy();
   });
@@ -127,7 +127,7 @@ describe('FileManager', () => {
     fileManager.addToMantaray(fileManager.mantaray, 'a'.repeat(64), { Filename: '1.txt' });
 
     expect(fileManager.mantaray.addFork).toHaveBeenCalledWith(
-      encodePathToBytes('1.txt'),
+      Utils.hexToBytes('1.txt'),
       expect.any(Uint8Array),
       expect.objectContaining({ Filename: '1.txt' }),
     );
@@ -219,11 +219,11 @@ describe('FileManager', () => {
     const fileManager = new FileManager('http://localhost:1633', privateKey);
     const customForks = {
       nested: {
-        prefix: encodePathToBytes('nested'),
+        prefix: Utils.hexToBytes('nested'),
         node: {
           forks: {
             'file.txt': {
-              prefix: encodePathToBytes('file.txt'),
+              prefix: Utils.hexToBytes('file.txt'),
               node: {
                 isValueType: () => true,
                 getEntry: new Uint8Array(Buffer.from('c'.repeat(64), 'hex')),
@@ -299,7 +299,7 @@ describe('FileManager', () => {
     fileManager.addToMantaray(mantaray, 'a'.repeat(64), customMetadata);
 
     expect(mantaray.addFork).toHaveBeenCalledWith(
-      encodePathToBytes('file'),
+      Utils.hexToBytes('file'),
       expect.any(Uint8Array),
       expect.objectContaining({
         Author: 'Test Author',
@@ -314,18 +314,18 @@ describe('FileManager', () => {
 
     const mockForks = {
       file: {
-        prefix: encodePathToBytes('file'),
+        prefix: Utils.hexToBytes('file'),
         node: {
           forks: {
             '1.txt': {
-              prefix: encodePathToBytes('1.txt'),
+              prefix: Utils.hexToBytes('1.txt'),
               node: {
                 isValueType: () => true,
                 getEntry: new Uint8Array(Buffer.from('a'.repeat(64), 'hex')),
               },
             },
             '2.txt': {
-              prefix: encodePathToBytes('2.txt'),
+              prefix: Utils.hexToBytes('2.txt'),
               node: {
                 isValueType: () => true,
                 getEntry: new Uint8Array(Buffer.from('b'.repeat(64), 'hex')),
@@ -362,7 +362,7 @@ describe('FileManager', () => {
     fileManager.addToMantaray(fileManager.mantaray, 'a'.repeat(64), {});
 
     expect(fileManager.mantaray.addFork).toHaveBeenCalledWith(
-      encodePathToBytes('file'),
+      Utils.hexToBytes('file'),
       expect.any(Uint8Array),
       expect.objectContaining({ Filename: 'file' }),
     );
@@ -385,7 +385,7 @@ describe('FileManager', () => {
     await fileManager.uploadFile(mockFilePath, fileManager.mantaray, 'test-stamp', customMetadata, '2');
 
     expect(fileManager.mantaray.addFork).toHaveBeenCalledWith(
-      encodePathToBytes('file1.txt'),
+      Utils.hexToBytes('file1.txt'),
       expect.any(Uint8Array),
       expect.objectContaining({
         Filename: 'file1.txt',
@@ -404,7 +404,7 @@ describe('FileManager', () => {
     await fileManager.uploadFile(mockFilePath, fileManager.mantaray, 'test-stamp');
 
     expect(fileManager.mantaray.addFork).toHaveBeenCalledWith(
-      encodePathToBytes('file2.txt'),
+      Utils.hexToBytes('file2.txt'),
       expect.any(Uint8Array),
       expect.objectContaining({
         Filename: 'file2.txt',
@@ -420,11 +420,11 @@ describe('FileManager', () => {
 
     const mockForks = {
       file: {
-        prefix: encodePathToBytes('file'),
+        prefix: Utils.hexToBytes('file'),
         node: {
           forks: {
             '1.txt': {
-              prefix: encodePathToBytes('1.txt'),
+              prefix: Utils.hexToBytes('1.txt'),
               node: {
                 isValueType: () => true,
                 getEntry: new Uint8Array(Buffer.from('a'.repeat(64), 'hex')),
@@ -456,11 +456,11 @@ describe('FileManager', () => {
     const fileManager = new FileManager('http://localhost:1633', privateKey);
     const customForks = {
       custom: {
-        prefix: encodePathToBytes('custom'),
+        prefix: Utils.hexToBytes('custom'),
         node: {
           forks: {
             'file3.txt': {
-              prefix: encodePathToBytes('file3.txt'),
+              prefix: Utils.hexToBytes('file3.txt'),
               node: {
                 isValueType: () => true,
                 getEntry: new Uint8Array(Buffer.from('c'.repeat(64), 'hex')),

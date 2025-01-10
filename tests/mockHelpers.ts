@@ -1,4 +1,4 @@
-import { Bee, Reference } from '@ethersphere/bee-js';
+import { Bee, Reference, Topic } from '@ethersphere/bee-js';
 import { TextDecoder, TextEncoder } from 'util';
 
 export function createMockBee(): Partial<Bee> {
@@ -41,6 +41,22 @@ export function createMockBee(): Partial<Bee> {
         '8d12623989dd6f6f899209c5029c7cba8b36c408b4106a21b407523c27af1f34',
         'df5c87236b99ef474de7936d74d0e6df0b6cd3c66ad27ac45e6eb081459e3708',
       ] as Reference[]);
+    }),
+
+    // @ts-expect-error: makeFeedReader signature may not match Bee's exact type
+    makeFeedReader: jest.fn(() => {
+      console.log('Mock makeFeedReader called');
+      return {
+        download: jest.fn().mockResolvedValue({
+          reference: 'c'.repeat(64) as Reference,
+          feedIndexNext: 1,
+        }),
+      };
+    }),
+
+    makeFeedTopic: jest.fn(() => {
+      console.log('Mock makeFeedTopic called');
+      return '0000000000000000000000000000000000000000000000000000000000000000' as Topic;
     }),
 
     url: 'http://localhost:1633',

@@ -1,4 +1,4 @@
-import { Bytes } from 'mantaray-js';
+import { Bytes } from '@solarpunkltd/mantaray-js';
 import path from 'path';
 
 import { SharedMessage } from './types';
