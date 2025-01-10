@@ -1,5 +1,4 @@
-import { Bee, Reference, Topic } from '@ethersphere/bee-js';
-import { TextDecoder, TextEncoder } from 'util';
+import { Bee, Reference, Topic, Utils } from '@ethersphere/bee-js';
 
 export function createMockBee(): Partial<Bee> {
   return {
@@ -67,11 +66,11 @@ export function createMockBee(): Partial<Bee> {
 export function createMockMantarayNode(customForks: Record<string, any> = {}): any {
   const defaultForks: { [key: string]: any } = {
     file: {
-      prefix: encodePathToBytes('file'),
+      prefix: Utils.hexToBytes('file'),
       node: {
         forks: {
           '1.txt': {
-            prefix: encodePathToBytes('1.txt'),
+            prefix: Utils.hexToBytes('1.txt'),
             node: {
               isValueType: () => true,
               getEntry: new Uint8Array(Buffer.from('a'.repeat(64), 'hex')),
@@ -79,7 +78,7 @@ export function createMockMantarayNode(customForks: Record<string, any> = {}): a
             },
           },
           '2.txt': {
-            prefix: encodePathToBytes('2.txt'),
+            prefix: Utils.hexToBytes('2.txt'),
             node: {
               isValueType: () => true,
               getEntry: new Uint8Array(Buffer.from('b'.repeat(64), 'hex')),
@@ -95,7 +94,7 @@ export function createMockMantarayNode(customForks: Record<string, any> = {}): a
   return {
     forks: customForks || defaultForks,
     addFork: jest.fn((path: Uint8Array, reference: Uint8Array) => {
-      const decodedPath = new TextDecoder().decode(path);
+      const decodedPath = Utils.bytesToHex(path);
       console.log(`Mock addFork called with path: ${decodedPath}`);
       defaultForks[decodedPath] = {
         prefix: path,
@@ -108,8 +107,4 @@ export function createMockMantarayNode(customForks: Record<string, any> = {}): a
       return callback(mockData);
     }),
   };
-}
-
-function encodePathToBytes(path: string): Uint8Array {
-  return path ? new TextEncoder().encode(path) : new Uint8Array();
 }

@@ -15,8 +15,8 @@ import { readFileSync } from 'fs';
 import path from 'path';
 
 import { DEFAULT_FEED_TYPE, SHARED_INBOX_TOPIC, STAMP_LIST_TOPIC } from './constants';
-import { FileWithMetadata, GranteeList, SharedMessage, StampList, StampWithMetadata } from './types';
-import { assertSharedMessage, encodePathToBytes, getContentType } from './utils';
+import { FileWithMetadata, SharedMessage, StampList, StampWithMetadata } from './types';
+import { assertSharedMessage, getContentType } from './utils';
 
 export class FileManager {
   // TODO: private vars
@@ -28,7 +28,7 @@ export class FileManager {
   private stampList: StampWithMetadata[];
   private nextStampFeedIndex: string;
   private privateKey: string;
-  private granteeList: GranteeList;
+  private granteeLists: string[];
   private sharedWithMe: SharedMessage[];
   private sharedSubscription: PssSubscription;
   private address: string;
@@ -50,16 +50,14 @@ export class FileManager {
 
     this.mantaray = new MantarayNode();
     this.importedFiles = [];
-    this.granteeList = { filesSharedWith: new Map<string, string[]>() };
     this.sharedWithMe = [];
     this.sharedSubscription = {} as PssSubscription;
   }
 
   // TODO: use allSettled for file fetching and only save the ones that are successful
-  async initialize(items: any | undefined) {
+  async initialize(items: any | undefined): Promise<void> {
     try {
-      // TODO: is await needed ?
-      this.sharedSubscription = await this.subscribeToSharedInbox();
+      this.sharedSubscription = this.subscribeToSharedInbox();
     } catch (error: any) {
       console.log('Error during shared inbox subscription: ', error);
     }
@@ -70,8 +68,8 @@ export class FileManager {
       if (this.stampList.length > 0) {
         console.log('Using stamp list for initialization.');
         for (const elem of this.stampList) {
-          if (elem.fileReferences !== undefined && elem.fileReferences.length > 0) {
-            await this.importReferences(elem.fileReferences as Reference[], elem.stamp.batchID);
+          if (elem.references !== undefined && elem.references.length > 0) {
+            await this.importReferences(elem.references as Reference[], elem.stamp.batchID);
           }
         }
       }
@@ -94,22 +92,23 @@ export class FileManager {
       throw error;
     }
   }
-
-  async intializeMantarayUsingFeed() {
+  // TODO: is this method necessary ?
+  async intializeMantarayUsingFeed(): Promise<void> {
     //
   }
 
-  async loadMantaray(manifestReference: Reference) {
+  async loadMantaray(manifestReference: Reference): Promise<void> {
     const loadFunction = async (address: MantarayRef): Promise<Uint8Array> => {
       return this.bee.downloadData(Utils.bytesToHex(address));
     };
 
-    this.mantaray.load(loadFunction, Utils.hexToBytes(manifestReference));
+    await this.mantaray.load(loadFunction, Utils.hexToBytes(manifestReference));
   }
 
   // TODO: method to list new stamp with files
   // TODO: encrypt
   // TODO: how and how long to store the stamps feed data ?
+  // TODO: it seems inefficient to update always with the whole fileref array
   async updateStampData(stamp: string | BatchId, privateKey: string): Promise<void> {
     const topicHex = this.bee.makeFeedTopic(STAMP_LIST_TOPIC);
     const feedWriter = this.bee.makeFeedWriter(
@@ -118,8 +117,10 @@ export class FileManager {
       privateKey /*, { headers: { encrypt: "true" } }*/,
     );
     try {
-      const data = JSON.stringify({ filesOfStamps: this.stampList.map((s) => [s.stamp.batchID, s.fileReferences]) });
-      const stampListDataRef = await this.bee.uploadData(stamp, data);
+      const stampData = {
+        filesOfStamps: this.stampList.map((s) => [s.stamp.batchID, s.references]),
+      } as unknown as StampList;
+      const stampListDataRef = await this.bee.uploadData(stamp, JSON.stringify(stampData));
       const writeResult = await feedWriter.upload(stamp, stampListDataRef.reference, {
         index: this.nextStampFeedIndex,
       });
@@ -157,7 +158,7 @@ export class FileManager {
         const stampIx = this.stampList.findIndex((s) => s.stamp.batchID === batchId);
         if (stampIx !== -1) {
           if (fileRefs.length > 0) {
-            this.stampList[stampIx].fileReferences = [...fileRefs];
+            this.stampList[stampIx].references = [...fileRefs];
           }
         }
       }
@@ -221,7 +222,7 @@ export class FileManager {
     return this.stampList;
   }
 
-  async importReferences(referenceList: Reference[], batchId?: string, isLocal = false) {
+  async importReferences(referenceList: Reference[], batchId?: string, isLocal = false): Promise<void> {
     const processPromises = referenceList.map(async (item: any) => {
       const reference: Reference = isLocal ? item.hash : item;
       try {
@@ -252,7 +253,7 @@ export class FileManager {
         this.addToMantaray(undefined, reference, metadata);
 
         // Track imported files
-        // TODO: shared flag
+        // TODO: eglref, shared, timestamp -> mantaray root metadata
         this.importedFiles.push({ reference: reference, name: fileName, batchId: batchId || '', shared: false });
       } catch (error: any) {
         console.error(`[ERROR] Failed to process reference ${reference}: ${error.message}`);
@@ -262,16 +263,16 @@ export class FileManager {
     await Promise.all(processPromises); // Wait for all references to be processed
   }
 
-  async importPinnedReferences() {
+  async importPinnedReferences(): Promise<void> {
     const allPins = await this.bee.getAllPins();
     await this.importReferences(allPins);
   }
 
-  async importLocalReferences(items: any) {
+  async importLocalReferences(items: any): Promise<void> {
     await this.importReferences(items, undefined, true);
   }
 
-  async downloadFile(mantaray: MantarayNode, filePath: string) {
+  async downloadFile(mantaray: MantarayNode, filePath: string): Promise<object> {
     mantaray = mantaray || this.mantaray;
     console.log(`Downloading file: ${filePath}`);
     const normalizedPath = path.normalize(filePath);
@@ -279,7 +280,7 @@ export class FileManager {
     let currentNode = mantaray;
 
     for (const segment of segments) {
-      const segmentBytes = encodePathToBytes(segment);
+      const segmentBytes = Utils.hexToBytes(segment);
       const fork = Object.values(currentNode.forks || {}).find((f) => Buffer.compare(f.prefix, segmentBytes) === 0);
 
       if (!fork) throw new Error(`Path segment not found: ${segment}`);
@@ -308,7 +309,7 @@ export class FileManager {
     }
   }
 
-  async downloadFiles(mantaray: MantarayNode) {
+  async downloadFiles(mantaray: MantarayNode): Promise<object | null | undefined> {
     mantaray = mantaray || this.mantaray;
     console.log('Downloading all files from Mantaray...');
     const forks = mantaray.forks;
@@ -359,6 +360,8 @@ export class FileManager {
     return validResults; // Return successful download results
   }
 
+  // TODO: always upload with ACT, only adding the publisher as grantee first, (by defualt) then when shared add the grantees
+  // TODO: store filerefs with the historyrefs
   async uploadFile(
     file: string,
     mantaray: MantarayNode | undefined,
@@ -366,7 +369,7 @@ export class FileManager {
     customMetadata = {},
     redundancyLevel = '1',
     save = true,
-  ) {
+  ): Promise<string> {
     mantaray = mantaray || this.mantaray;
     console.log(`Uploading file: ${file}`);
     const fileData = readFileSync(file);
@@ -383,6 +386,7 @@ export class FileManager {
 
     const uploadHeaders = {
       contentType,
+      act: true,
       headers: {
         'swarm-redundancy-level': redundancyLevel,
       },
@@ -401,16 +405,16 @@ export class FileManager {
       const stampIx = this.stampList.findIndex((s) => s.stamp.batchID === stamp);
       if (stampIx === -1) {
         const newStamp = await this.fetchStamp(stamp);
-        // TODO: what to do here ? batch should alreade be usable
+        // TODO: what to do here ? batch should already be usable
         if (newStamp === undefined) {
           throw new Error(`Stamp not found: ${stamp}`);
         }
 
-        this.stampList.push({ stamp: newStamp, fileReferences: [uploadResponse.reference] });
-      } else if (this.stampList[stampIx].fileReferences === undefined) {
-        this.stampList[stampIx].fileReferences = [uploadResponse.reference];
+        this.stampList.push({ stamp: newStamp, references: [uploadResponse.reference] });
+      } else if (this.stampList[stampIx].references === undefined) {
+        this.stampList[stampIx].references = [uploadResponse.reference];
       } else {
-        this.stampList[stampIx].fileReferences.push(uploadResponse.reference);
+        this.stampList[stampIx].references.push(uploadResponse.reference);
       }
 
       await this.updateStampData(stamp, this.privateKey);
@@ -423,13 +427,13 @@ export class FileManager {
     }
   }
 
-  addToMantaray(mantaray: MantarayNode | undefined, reference: string, metadata: MetadataMapping = {}) {
+  addToMantaray(mantaray: MantarayNode | undefined, reference: string, metadata: MetadataMapping = {}): void {
     mantaray = mantaray || this.mantaray;
 
     const filePath = metadata.fullPath || metadata.Filename || 'file';
     const originalFileName = metadata.originalFileName || path.basename(filePath);
 
-    const bytesPath = encodePathToBytes(filePath);
+    const bytesPath = Utils.hexToBytes(filePath);
 
     const metadataWithOriginalName = {
       ...metadata,
@@ -439,14 +443,17 @@ export class FileManager {
     mantaray.addFork(bytesPath, Utils.hexToBytes(reference), metadataWithOriginalName);
   }
 
-  async saveMantaray(mantaray: MantarayNode | undefined, stamp: string | BatchId) {
+  async saveMantaray(mantaray: MantarayNode | undefined, stamp: string | BatchId): Promise<string> {
     mantaray = mantaray || this.mantaray;
     console.log('Saving Mantaray manifest...');
 
     const saveFunction = async (data: Uint8Array): Promise<MantarayRef> => {
       const fileName = 'manifest';
       const contentType = 'application/json';
-      const uploadResponse = await this.bee.uploadFile(stamp, data, fileName, { contentType });
+      const uploadResponse = await this.bee.uploadFile(stamp, data, fileName, {
+        contentType,
+        act: true,
+      });
       return Utils.hexToBytes(uploadResponse.reference);
     };
 
@@ -457,7 +464,7 @@ export class FileManager {
     return hexReference;
   }
 
-  listFiles(mantaray: MantarayNode | undefined, includeMetadata = false) {
+  listFiles(mantaray: MantarayNode | undefined, includeMetadata = false): any {
     mantaray = mantaray || this.mantaray;
     console.log('Listing files in Mantaray...');
 
@@ -504,7 +511,7 @@ export class FileManager {
     return fileList;
   }
 
-  getDirectoryStructure(mantaray: MantarayNode | undefined, rootDirName: string) {
+  getDirectoryStructure(mantaray: MantarayNode | undefined, rootDirName: string): any {
     mantaray = mantaray || this.mantaray;
     console.log('Building directory structure from Mantaray...');
 
@@ -517,7 +524,7 @@ export class FileManager {
     return wrappedStructure;
   }
 
-  buildDirectoryStructure(mantaray: MantarayNode) {
+  buildDirectoryStructure(mantaray: MantarayNode): any {
     mantaray = mantaray || this.mantaray;
     console.log('Building raw directory structure...');
 
@@ -549,7 +556,7 @@ export class FileManager {
     return structure;
   }
 
-  getContentsOfDirectory(targetPath: string, mantaray: MantarayNode | undefined, rootDirName: string) {
+  getContentsOfDirectory(targetPath: string, mantaray: MantarayNode | undefined, rootDirName: string): any {
     mantaray = mantaray || this.mantaray;
 
     const directoryStructure: { [key: string]: any } = this.getDirectoryStructure(mantaray, rootDirName);
@@ -610,6 +617,10 @@ export class FileManager {
       // TODO: parse data as ref array
       const grantResult = await this.bee.getGrantees(eGlRef);
       const grantees = grantResult.data;
+      const granteeList = this.granteeLists.find((glref) => glref === eGlRef);
+      if (granteeList !== undefined) {
+        this.granteeLists.push(eGlRef);
+      }
       console.log('Grantees fetched: ', grantees);
       return grantees;
     } catch (error: any) {
@@ -617,29 +628,16 @@ export class FileManager {
       return undefined;
     }
   }
-  // TODO: cache and search locally or on swarm ?
-  // async getGranteesForFile(fileRef: string | Reference): Promise<string[] | undefined> {
-  //   try {
-  //     const file = this.importedFiles.find((f) => f.reference === fileRef);
-  //     if (!file) {
-  //       console.error('File not found: ', fileRef);
-  //       return undefined;
-  //     }
 
-  //     const fileGrantees = this.granteeList.find((g) => g.filesSharedWith[fileRef]);
-  //     if (!fileGrantees) {
-  //       console.error('No grantees found for file: ', fileRef);
-  //       return undefined;
-  //     }
-
-  //     const grantees = fileGrantees.filesSharedWith[fileRef];
-  //     console.log('Grantees for file fetched: ', grantees);
-  //     return grantees;
-  //   } catch (error: any) {
-  //     console.error(`Failed to get share grantee list for file${fileRef}\n: ${error}`);
-  //     return undefined;
-  //   }
-  // }
+  // fetches the list of grantees who can access the file reference
+  async getGranteesOfFile(fileRef: string | Reference): Promise<string[] | undefined> {
+    const file = this.importedFiles.find((f) => f.reference === fileRef);
+    if (file === undefined || file.eGlRef === undefined) {
+      console.error('File or grantee ref not found for reference: ', fileRef);
+      return undefined;
+    }
+    return await this.getGrantees(file.eGlRef);
+  }
 
   // TODO: separate revoke function or frontend will handle it by creating a new act ?
   // TODO: create a feed just like for the stamps to store the grantee list refs
@@ -649,7 +647,7 @@ export class FileManager {
   // updates the list of grantees who can access the file reference under the history reference
   async handleGrantees(
     batchId: string | BatchId,
-    fileRef: string,
+    file: FileWithMetadata,
     grantees: {
       add?: string[];
       revoke?: string[];
@@ -674,9 +672,23 @@ export class FileManager {
         console.log('Access granted, new grantee list reference: ', grantResult.ref);
       }
 
-      const currentGrantees = this.granteeList.filesSharedWith.get(fileRef) || [];
-      const newGrantees = [...new Set([...currentGrantees, ...(grantees.add || []), ...(grantees.revoke || [])])];
-      this.granteeList.filesSharedWith.set(fileRef, newGrantees);
+      // TODO: how to handle sharing: base fileref remains but the latest & encrypted ref that is shared changes -> versioning ??
+      const currentGranteesIx = this.granteeLists.findIndex((glref) => glref === file.eGlRef);
+      if (currentGranteesIx === -1) {
+        this.granteeLists.push(grantResult.ref);
+      } else {
+        this.granteeLists[currentGranteesIx] = grantResult.ref;
+        // TODO: maybe don't need to check if upload + patch happens at the same time -> add to import ?
+        const fIx = this.importedFiles.findIndex((f) => f.reference === file.reference);
+        if (fIx === -1) {
+          console.log('Provided file reference not found in imported files: ', file.reference);
+          return undefined;
+        } else {
+          this.importedFiles[fIx].eGlRef = grantResult.ref;
+        }
+
+        // const newGrantees = [...new Set([...currentGrantees, ...(grantees.add || []), ...(grantees.revoke || [])])];
+      }
       return grantResult;
     } catch (error: any) {
       console.error(`Failed to grant share access: ${error}`);
@@ -684,9 +696,9 @@ export class FileManager {
     }
   }
 
-  async subscribeToSharedInbox(): Promise<PssSubscription> {
-    const subscription = this.bee.pssSubscribe(SHARED_INBOX_TOPIC, {
-      onMessage: async (message) => {
+  subscribeToSharedInbox(): PssSubscription {
+    return this.bee.pssSubscribe(SHARED_INBOX_TOPIC, {
+      onMessage: (message) => {
         console.log('Received shared inbox message: ', message);
         assertSharedMessage(message);
         this.sharedWithMe.push(message);
@@ -696,8 +708,14 @@ export class FileManager {
         throw e;
       },
     });
+  }
 
-    return subscription;
+  // TODO: do we need to cancel sub at shutdown ?
+  unsubscribeFromSharedInbox(): void {
+    if (this.sharedSubscription) {
+      console.log('Unsubscribed from shared inbox, topic: ', this.sharedSubscription.topic);
+      this.sharedSubscription.cancel();
+    }
   }
 
   // recipient is optional, if not provided the message will be broadcasted == pss public key
@@ -708,9 +726,10 @@ export class FileManager {
       await this.bee.pssSend(batchId, SHARED_INBOX_TOPIC, target, msgData, recipient);
     } catch (error: any) {
       console.log('Failed to share item: ', error);
+      return undefined;
     }
   }
-
+  // TODO: maybe store only the encrypted refs for security and use
   async downloadSharedItem(reference: string): Promise<Data | undefined> {
     if (!this.sharedWithMe.find((msg) => msg.references.includes(reference))) {
       console.log('Cannot find reference in shared messages: ', reference);
@@ -718,19 +737,12 @@ export class FileManager {
     }
 
     try {
-      const data = await this.bee.downloadFile(reference);
+      // TODO: publisher and history headers
+      const data = await this.bee.downloadFile(reference, undefined, { headers: { 'swarm-act': 'true' } });
       return data.data;
     } catch (error: any) {
       console.error(`Failed to download shared file ${reference}\n: ${error}`);
       return undefined;
-    }
-  }
-
-  // TODO: do we need to cancel sub at shutdown ?
-  unsubscribeFromSharedInbox() {
-    if (this.sharedSubscription) {
-      console.log('Unsubscribed from shared inbox, topic: ', this.sharedSubscription.topic);
-      this.sharedSubscription.cancel();
     }
   }
 }
