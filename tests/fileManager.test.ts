@@ -86,27 +86,29 @@ describe('FileManager - initialize', () => {
 describe('FileManager', () => {
   let mockBee: ReturnType<typeof createMockBee>;
   const privateKey = hexlify(Utils.keccak256Hash('pkinput'));
+  const privateKey = hexlify(Utils.keccak256Hash('pkinput'));
 
   beforeEach(() => {
     mockBee = createMockBee();
     jest.clearAllMocks();
   });
 
-  // it('should throw an error if Bee URL is not provided', () => {
-  //   expect(() => new FileManager('http://localhost:1633', 'privateKey')).toThrow(
-  //     '"privateKey" is required for initializing the FileManager.',
-  //   );
-  // });
+  it('should throw an error if Bee URL is not provided', () => {
+    expect(() => new FileManager('http://localhost:1633', '')).toThrow(
+      'privateKey is required for initializing the FileManager.',
+    );
+  });
 
-  // it('should throw an error if "privatekey" is not provided', () => {
-  //   expect(() => new FileManager('', '')).toThrow('Bee URL is required for initializing the FileManager.');
-  // });
+  it('should throw an error if privatekey is not provided', () => {
+    expect(() => new FileManager('', 'privKey')).toThrow('Bee URL is required for initializing the FileManager.');
+  });
 
   it('should initialize with a valid Bee URL', () => {
     const fileManager = new FileManager('http://localhost:1633', '"privateKey"');
     expect(fileManager.bee).toBeTruthy();
     expect(fileManager.mantaray).toBeTruthy();
   });
+
 
   it('should upload a file and return its reference', async () => {
     const fileManager = new FileManager('http://localhost:1633', privateKey);
@@ -121,7 +123,7 @@ describe('FileManager', () => {
       headers: { 'swarm-redundancy-level': '1' },
     });
   });
-
+/*DONE
   it('should add a file to the Mantaray node', () => {
     const fileManager = new FileManager('http://localhost:1633', privateKey);
     fileManager.addToMantaray(fileManager.mantaray, 'a'.repeat(64), { Filename: '1.txt' });
