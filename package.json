@@ -23,7 +23,7 @@
   "license": "MIT",
   "dependencies": {
     "@ethersphere/bee-js": "^8.3.1",
-    "mantaray-js": "file:/Users/ujvaribalint/repos/solarpunk/mantaray-js"
+    "mantaray-js": "file:/home/user/SolarPunk/mantaray-js"
   },
   "devDependencies": {
     "@babel/preset-env": "^7.26.0",
