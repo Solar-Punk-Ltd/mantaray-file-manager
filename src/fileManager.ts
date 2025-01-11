@@ -1,7 +1,9 @@
 import {
   BatchId,
   Bee,
+  BeeRequestOptions,
   Data,
+  ENCRYPTED_REFERENCE_HEX_LENGTH,
   GranteesResult,
   PostageBatch,
   PssSubscription,
@@ -32,7 +34,7 @@ export class FileManager {
   private sharedWithMe: SharedMessage[];
   private sharedSubscription: PssSubscription;
   private address: string;
-
+  // TODO: is this.mantaray needed ? always a new mantaray instance is created when wokring on an item
   constructor(beeUrl: string, privateKey: string) {
     if (!beeUrl) {
       throw new Error('Bee URL is required for initializing the FileManager.');
@@ -222,6 +224,7 @@ export class FileManager {
     return this.stampList;
   }
 
+  // TODO: only download metadata files for listing -> only download the whole file on demand
   async importReferences(referenceList: Reference[], batchId?: string, isLocal = false): Promise<void> {
     const processPromises = referenceList.map(async (item: any) => {
       const reference: Reference = isLocal ? item.hash : item;
@@ -229,7 +232,25 @@ export class FileManager {
         console.log(`Processing reference: ${reference}`);
 
         // Download the file to extract its metadata
-        const fileData = await this.bee.downloadFile(reference);
+
+        // TODO: act headers
+        const options: BeeRequestOptions = {};
+        // if (file.reference.length === ENCRYPTED_REFERENCE_HEX_LENGTH) {
+        //   if (file.historyRef !== undefined) {
+        //     options.headers = { 'swarm-act-history-address': file.historyRef };
+        //   }
+        //   if (file.owner !== undefined) {
+        //     options.headers = {
+        //       ...options.headers,
+        //       'swarm-act-publisher': file.owner,
+        //     };
+        //   }
+        //   if (file.timestamp !== undefined) {
+        //     options.headers = { ...options.headers, 'swarm-act-timestamp': file.timestamp.toString() };
+        //   }
+        // }
+
+        const fileData = await this.bee.downloadFile(reference, undefined, options);
         const content = Buffer.from(fileData.data.toString() || '');
         const fileName = fileData.name || `pinned-${reference.substring(0, 6)}`;
         const contentType = fileData.contentType || 'application/octet-stream';
@@ -360,7 +381,7 @@ export class FileManager {
     return validResults; // Return successful download results
   }
 
-  // TODO: always upload with ACT, only adding the publisher as grantee first, (by defualt) then when shared add the grantees
+  // TODO: always upload with ACT, only adding the publisher as grantee first (by defualt), then when shared, add the grantees
   // TODO: store filerefs with the historyrefs
   async uploadFile(
     file: string,
@@ -443,7 +464,8 @@ export class FileManager {
     mantaray.addFork(bytesPath, Utils.hexToBytes(reference), metadataWithOriginalName);
   }
 
-  async saveMantaray(mantaray: MantarayNode | undefined, stamp: string | BatchId): Promise<string> {
+  // TODO: problem: mantary impl. is old and does not return the history address
+  async saveMantaray(mantaray: MantarayNode | undefined, stamp: string | BatchId): Promise<object> {
     mantaray = mantaray || this.mantaray;
     console.log('Saving Mantaray manifest...');
 
@@ -457,11 +479,10 @@ export class FileManager {
       return Utils.hexToBytes(uploadResponse.reference);
     };
 
-    const manifestReference = await mantaray.save(saveFunction);
+    const manifestReference = Utils.bytesToHex(await mantaray.save(saveFunction));
 
-    const hexReference = Buffer.from(manifestReference).toString('hex');
-    console.log(`Mantaray manifest saved with reference: ${hexReference}`);
-    return hexReference;
+    console.log(`Mantaray manifest saved with reference: ${manifestReference}`);
+    return { eRef: manifestReference /*hRef: uploadResponse.historyAddress */ };
   }
 
   listFiles(mantaray: MantarayNode | undefined, includeMetadata = false): any {
@@ -643,7 +664,7 @@ export class FileManager {
   // TODO: create a feed just like for the stamps to store the grantee list refs
   // TODO: create a feed for the share access that can be read by each grantee
   // TODO: notify user if it has been granted access by someone else
-  // TODO: history handling ?
+  // TODO: stamp of the file vs grantees stamp?
   // updates the list of grantees who can access the file reference under the history reference
   async handleGrantees(
     batchId: string | BatchId,
@@ -718,30 +739,88 @@ export class FileManager {
     }
   }
 
-  // recipient is optional, if not provided the message will be broadcasted == pss public key
-  async shareItem(batchId: string, targetOverlay: string, message: SharedMessage, recipient: string): Promise<void> {
+  // TODO: allsettled
+  // TODO: history handling ? -> bee-js: is historyref mandatory ? patch can create a granteelist and update it in place
+  async shareItems(
+    batchId: string,
+    targetOverlays: string[],
+    item: SharedMessage,
+    recipients: string[],
+  ): Promise<void> {
     try {
-      const target = Utils.makeMaxTarget(targetOverlay);
-      const msgData = new Uint8Array(Buffer.from(JSON.stringify(message)));
-      await this.bee.pssSend(batchId, SHARED_INBOX_TOPIC, target, msgData, recipient);
+      for (const ref of item.references) {
+        const file = this.importedFiles.find((f) => f.reference === ref);
+        if (file === undefined) {
+          console.log('File not found for reference: ', ref);
+          continue;
+        }
+        if (file.historyRef === undefined) {
+          console.log('History not found for reference: ', ref);
+          continue;
+        }
+
+        await this.handleGrantees(batchId, { reference: ref }, { add: recipients }, file.historyRef, file.eGlRef);
+      }
+
+      await this.sendShareMessage(batchId, targetOverlays, item, recipients);
     } catch (error: any) {
-      console.log('Failed to share item: ', error);
+      console.log('Failed to share items: ', error);
       return undefined;
     }
   }
-  // TODO: maybe store only the encrypted refs for security and use
-  async downloadSharedItem(reference: string): Promise<Data | undefined> {
-    if (!this.sharedWithMe.find((msg) => msg.references.includes(reference))) {
-      console.log('Cannot find reference in shared messages: ', reference);
+
+  // recipient is optional, if not provided the message will be broadcasted == pss public key
+  async sendShareMessage(
+    batchId: string,
+    targetOverlays: string[],
+    item: SharedMessage,
+    recipients: string[],
+  ): Promise<void> {
+    // TODO: valid length check of recipient and target
+    if (recipients.length === 0 || recipients.length !== targetOverlays.length) {
+      console.log('Invalid recipients or  targetoverlays specified for sharing.');
       return undefined;
+    }
+
+    for (let i = 0; i < recipients.length; i++) {
+      try {
+        const target = Utils.makeMaxTarget(targetOverlays[i]);
+        const msgData = new Uint8Array(Buffer.from(JSON.stringify(item)));
+        await this.bee.pssSend(batchId, SHARED_INBOX_TOPIC, target, msgData, recipients[i]);
+      } catch (error: any) {
+        console.log(`Failed to share item with recipient: ${recipients[i]}\n `, error);
+      }
+    }
+  }
+  // TODO: maybe store only the encrypted refs for security and use
+  async downloadSharedItem(file: FileWithMetadata, path?: string): Promise<Data | undefined> {
+    if (!this.sharedWithMe.find((msg) => msg.references.includes(file.reference))) {
+      console.log('Cannot find reference in shared messages: ', file.reference);
+      return undefined;
+    }
+
+    const options: BeeRequestOptions = {};
+    if (file.reference.length === ENCRYPTED_REFERENCE_HEX_LENGTH) {
+      if (file.historyRef !== undefined) {
+        options.headers = { 'swarm-act-history-address': file.historyRef };
+      }
+      if (file.owner !== undefined) {
+        options.headers = {
+          ...options.headers,
+          'swarm-act-publisher': file.owner,
+        };
+      }
+      if (file.timestamp !== undefined) {
+        options.headers = { ...options.headers, 'swarm-act-timestamp': file.timestamp.toString() };
+      }
     }
 
     try {
       // TODO: publisher and history headers
-      const data = await this.bee.downloadFile(reference, undefined, { headers: { 'swarm-act': 'true' } });
+      const data = await this.bee.downloadFile(file.reference, path, options);
       return data.data;
     } catch (error: any) {
-      console.error(`Failed to download shared file ${reference}\n: ${error}`);
+      console.error(`Failed to download shared file ${file.reference}\n: ${error}`);
       return undefined;
     }
   }

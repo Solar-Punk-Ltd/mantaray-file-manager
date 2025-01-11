@@ -2,11 +2,12 @@ import { BatchId, PostageBatch, Reference } from '@ethersphere/bee-js';
 
 export interface FileWithMetadata {
   reference: string | Reference;
-  batchId: string | BatchId;
+  batchId?: string | BatchId;
   shared?: boolean;
   name?: string;
   owner?: string;
   eGlRef?: string | Reference;
+  historyRef?: string | Reference;
   timestamp?: number;
 }
 
