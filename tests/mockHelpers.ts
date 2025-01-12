@@ -54,12 +54,25 @@ export function createMockBee(): Partial<Bee> {
       };
     }),
 
+    // @ts-expect-error: makeFeedWriter signature may not match Bee's exact type
+    makeFeedWriter: jest.fn(() => {
+      console.log('Mock makeFeedWriter called');
+      return {
+        upload: jest.fn(() => {
+            return Promise.resolve({
+              reference: 'mocked-reference',
+            });
+          }
+        ),
+      };
+    }),
+
     getPostageBatch: jest.fn().mockResolvedValue({
       batchID: 'test-stamp',
       exists: true,
       usable: true,
     }),
-    
+
     getAllPostageBatch: jest.fn().mockResolvedValue([
       {
         batchID: 'test-stamp',
