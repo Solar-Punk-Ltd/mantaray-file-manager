@@ -4,7 +4,7 @@ import { hexlify } from 'ethers';
 
 import { FileManager } from '../src/fileManager';
 
-//import { encodePathToBytes } from '../src/utils';
+import { encodePathToBytes } from '../src/utils';
 import { createMockBee, createMockMantarayNode } from './mockHelpers';
 
 jest.mock('@solarpunkltd/mantaray-js', () => {
@@ -123,18 +123,19 @@ describe('FileManager', () => {
       headers: { 'swarm-redundancy-level': '1' },
     });
   });
-  /*DONE
+
   it('should add a file to the Mantaray node', () => {
     const fileManager = new FileManager('http://localhost:1633', privateKey);
     fileManager.addToMantaray(fileManager.mantaray, 'a'.repeat(64), { Filename: '1.txt' });
+    const pathAsBytes = encodePathToBytes('1.txt');
 
     expect(fileManager.mantaray.addFork).toHaveBeenCalledWith(
-      Utils.hexToBytes('1.txt'),
+      pathAsBytes,
       expect.any(Uint8Array),
       expect.objectContaining({ Filename: '1.txt' }),
     );
   });
-*/
+
   it('should save a Mantaray node and return its reference', async () => {
     const fileManager = new FileManager('http://localhost:1633', privateKey);
     fileManager.bee = mockBee as unknown as Bee; // Inject mockBee
