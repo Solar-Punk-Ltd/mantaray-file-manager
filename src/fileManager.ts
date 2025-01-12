@@ -111,6 +111,7 @@ export class FileManager {
   async initStamps(): Promise<void> {
     try {
       this.stampList = await this.getUsableStamps();
+      console.log('USTAMPST: ', this.stampList);
       console.log('Usable stamps fetched successfully.');
     } catch (error: any) {
       console.error(`Failed to update stamps: ${error}`);
