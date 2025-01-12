@@ -54,6 +54,20 @@ export function createMockBee(): Partial<Bee> {
       };
     }),
 
+    getPostageBatch: jest.fn().mockResolvedValue({
+      batchID: 'test-stamp',
+      exists: true,
+      usable: true,
+    }),
+    
+    getAllPostageBatch: jest.fn().mockResolvedValue([
+      {
+        batchID: 'test-stamp',
+        exists: true,
+        usable: true,
+      },
+    ]),
+
     makeFeedTopic: jest.fn(() => {
       console.log('Mock makeFeedTopic called');
       return '0000000000000000000000000000000000000000000000000000000000000000' as Topic;

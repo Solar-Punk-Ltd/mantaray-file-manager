@@ -7,7 +7,7 @@ import { FileManager } from '../src/fileManager';
 //import { encodePathToBytes } from '../src/utils';
 import { createMockBee, createMockMantarayNode } from './mockHelpers';
 
-jest.mock('mantaray-js', () => {
+jest.mock('@solarpunkltd/mantaray-js', () => {
   const mockMantarayNode = jest.fn(() => createMockMantarayNode());
   return {
     MantarayNode: mockMantarayNode,
@@ -104,7 +104,7 @@ describe('FileManager', () => {
   });
 
   it('should initialize with a valid Bee URL', () => {
-    const fileManager = new FileManager('http://localhost:1633', '"privateKey"');
+    const fileManager = new FileManager('http://localhost:1633', privateKey);
     expect(fileManager.bee).toBeTruthy();
     expect(fileManager.mantaray).toBeTruthy();
   });
@@ -122,7 +122,7 @@ describe('FileManager', () => {
       contentType: 'text/plain',
       headers: { 'swarm-redundancy-level': '1' },
     });
-  }); /*DONE
+  });
   /*DONE
   it('should add a file to the Mantaray node', () => {
     const fileManager = new FileManager('http://localhost:1633', privateKey);
