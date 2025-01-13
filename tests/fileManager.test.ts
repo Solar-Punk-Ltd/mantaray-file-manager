@@ -146,14 +146,17 @@ describe('FileManager', () => {
       contentType: 'application/json',
     });
   });
- /*FAILS
+
   it('should list files correctly in Mantaray', () => {
     const fileManager = new FileManager('http://localhost:1633', privateKey);
+
+    fileManager.mantaray = createMockMantarayNode() as any;
+
     const files = fileManager.listFiles(fileManager.mantaray, false); // Explicitly exclude metadata
 
     expect(files).toEqual([{ path: 'file/1.txt' }, { path: 'file/2.txt' }]);
   });
-*/ /*FAILS
+/*FAILS
   it('should download a specific file by path', async () => {
     const fileManager = new FileManager('http://localhost:1633', privateKey);
     fileManager.bee = mockBee as unknown as Bee; // Inject mockBee
@@ -454,16 +457,16 @@ describe('FileManager', () => {
       },
     });
   });
-*/ /*FAILS
+*/ /* FAILS
   it('should list files with metadata in custom forks', () => {
     const fileManager = new FileManager('http://localhost:1633', privateKey);
     const customForks = {
       custom: {
-        prefix: Utils.hexToBytes('custom'),
+        prefix: encodePathToBytes('custom'),
         node: {
           forks: {
             'file3.txt': {
-              prefix: Utils.hexToBytes('file3.txt'),
+              prefix: encodePathToBytes('file3.txt'),
               node: {
                 isValueType: () => true,
                 getEntry: new Uint8Array(Buffer.from('c'.repeat(64), 'hex')),

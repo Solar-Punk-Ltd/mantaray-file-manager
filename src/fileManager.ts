@@ -440,11 +440,12 @@ export class FileManager {
     const stack = [{ node: mantaray, path: '' }];
 
     while (stack.length > 0) {
+console.log('STACK: ', stack);
       const item = stack.pop();
       if (!item) continue;
       const { node, path: currentPath } = item;
       const forks = node.forks;
-
+console.log('FORKS: ', forks);
       if (!forks) continue;
 
       for (const [key, fork] of Object.entries(forks)) {

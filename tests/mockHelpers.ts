@@ -120,7 +120,7 @@ export function createMockMantarayNode(customForks: Record<string, any> = {}): a
   };
 
   return {
-    forks: customForks || defaultForks,
+    forks: Object.keys(customForks).length ? customForks : defaultForks,
     addFork: jest.fn((path: Uint8Array, reference: Uint8Array) => {
       const decodedPath = new TextDecoder().decode(path);
       console.log(`Mock addFork called with path: ${decodedPath}`);
