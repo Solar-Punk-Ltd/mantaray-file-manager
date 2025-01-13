@@ -3,8 +3,8 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { hexlify } from 'ethers';
 
 import { FileManager } from '../src/fileManager';
-
 import { encodePathToBytes } from '../src/utils';
+
 import { createMockBee, createMockMantarayNode } from './mockHelpers';
 
 jest.mock('@solarpunkltd/mantaray-js', () => {
@@ -109,7 +109,6 @@ describe('FileManager', () => {
     expect(fileManager.mantaray).toBeTruthy();
   });
 
-
   it('should upload a file and return its reference', async () => {
     const fileManager = new FileManager('http://localhost:1633', privateKey);
     fileManager.bee = mockBee as unknown as Bee;
@@ -155,8 +154,8 @@ describe('FileManager', () => {
     const files = fileManager.listFiles(fileManager.mantaray, false); // Explicitly exclude metadata
 
     expect(files).toEqual([{ path: 'file/1.txt' }, { path: 'file/2.txt' }]);
-  });
-/*FAILS
+  }); /*FAILS
+  /*FAILS
   it('should download a specific file by path', async () => {
     const fileManager = new FileManager('http://localhost:1633', privateKey);
     fileManager.bee = mockBee as unknown as Bee; // Inject mockBee
@@ -165,7 +164,7 @@ describe('FileManager', () => {
     expect(content.data).toBe('Mock content for aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
     expect(mockBee.downloadFile).toHaveBeenCalledWith('a'.repeat(64));
   });
-*/ /*FAILS
+*/
   it('should handle missing files gracefully', async () => {
     const fileManager = new FileManager('http://localhost:1633', privateKey);
     const mantaray = createMockMantarayNode() as any;

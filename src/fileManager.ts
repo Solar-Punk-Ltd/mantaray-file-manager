@@ -6,7 +6,7 @@ import path from 'path';
 
 import { DEFAULT_FEED_TYPE, STAMP_LIST_TOPIC } from './constants';
 import { FileWithMetadata, StampList, StampWithMetadata } from './types';
-import { encodePathToBytes, getContentType } from './utils';
+import { decodeEncodedPath, encodePathToBytes, getContentType } from './utils';
 
 export class FileManager {
   // TODO: private vars
@@ -440,12 +440,10 @@ export class FileManager {
     const stack = [{ node: mantaray, path: '' }];
 
     while (stack.length > 0) {
-console.log('STACK: ', stack);
       const item = stack.pop();
       if (!item) continue;
       const { node, path: currentPath } = item;
       const forks = node.forks;
-console.log('FORKS: ', forks);
       if (!forks) continue;
 
       for (const [key, fork] of Object.entries(forks)) {
@@ -465,7 +463,7 @@ console.log('FORKS: ', forks);
             }
           }
 
-          const fileEntry = { metadata, path: originalPath };
+          const fileEntry = { metadata, path: decodeEncodedPath(originalPath) };
           if (includeMetadata) {
             fileEntry.metadata = metadata;
           }

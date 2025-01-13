@@ -59,11 +59,10 @@ export function createMockBee(): Partial<Bee> {
       console.log('Mock makeFeedWriter called');
       return {
         upload: jest.fn(() => {
-            return Promise.resolve({
-              reference: 'mocked-reference',
-            });
-          }
-        ),
+          return Promise.resolve({
+            reference: 'mocked-reference',
+          });
+        }),
       };
     }),
 

@@ -33,3 +33,20 @@ export function encodePathToBytes(pathString: string) {
 export function decodeBytesToPath(bytes: Bytes<32>) {
   return new TextDecoder().decode(bytes);
 }
+
+export function decodeEncodedPath(encodedPath: string) {
+  const segments = encodedPath.split('/');
+
+  const decodedSegments = segments.map((segment) => {
+    if (segment === null) return '';
+    const match = segment.match(/.{1,2}/g);
+    if (!match) return '';
+    const hexBytes = match.map((hex) => parseInt(hex, 16));
+    const decodedBytes = new Uint8Array(hexBytes);
+    return new TextDecoder().decode(decodedBytes);
+  });
+
+  const decodedPath = decodedSegments.join('/');
+
+  return decodedPath;
+}
