@@ -46,3 +46,16 @@ export function assertSharedMessage(value: unknown): asserts value is SharedMess
     throw new TypeError('message property of SharedMessage has to be string!');
   }
 }
+
+export function decodeBytesToPath(bytes: Uint8Array): string {
+  if (bytes.length !== 32) {
+    const paddedBytes = new Uint8Array(32);
+    paddedBytes.set(bytes.slice(0, 32)); // Truncate or pad the input to ensure it's 32 bytes
+    bytes = paddedBytes;
+  }
+  return new TextDecoder().decode(bytes);
+}
+
+export function encodePathToBytes(pathString: string): Uint8Array {
+  return new TextEncoder().encode(pathString);
+}
