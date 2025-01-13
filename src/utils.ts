@@ -1,4 +1,3 @@
-import { Bytes } from '@solarpunkltd/mantaray-js';
 import path from 'path';
 
 export function getContentType(filePath: string) {
@@ -30,6 +29,11 @@ export function encodePathToBytes(pathString: string) {
   return new TextEncoder().encode(pathString);
 }
 
-export function decodeBytesToPath(bytes: Bytes<32>) {
+export function decodeBytesToPath(bytes: Uint8Array) {
+  if (bytes.length !== 32) {
+    const paddedBytes = new Uint8Array(32);
+    paddedBytes.set(bytes.slice(0, 32)); // Truncate or pad the input to ensure it's 32 bytes
+    bytes = paddedBytes;
+  }
   return new TextDecoder().decode(bytes);
 }

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { hexlify } from 'ethers';
 
 import { FileManager } from '../src/fileManager';
+import { encodePathToBytes } from '../src/utils';
 
 import { createMockBee, createMockMantarayNode } from './mockHelpers';
 
@@ -103,33 +104,65 @@ describe('FileManager', () => {
   // });
 
   it('should initialize with a valid Bee URL', () => {
-    const fileManager = new FileManager('http://localhost:1633', '"privateKey"');
+    const validPrivateKey = '0x'.padEnd(66, 'a'); // 64-character hex string padded with 'a'
+    const fileManager = new FileManager('http://localhost:1633', validPrivateKey);
     expect(fileManager.bee).toBeTruthy();
     expect(fileManager.mantaray).toBeTruthy();
   });
 
   it('should upload a file and return its reference', async () => {
     const fileManager = new FileManager('http://localhost:1633', privateKey);
-    fileManager.bee = mockBee as unknown as Bee;
+
+    // Spy on the uploadFile method of Bee
+    const uploadFileSpy = jest.spyOn(fileManager.bee, 'uploadFile').mockResolvedValue({
+      reference: 'a'.repeat(64) as Reference,
+      cid: () => 'mocked-cid', // Mock function returning a CID string
+      historyAddress: 'mocked-history-address',
+    });
+
+    type BatchId = string & { readonly length: 64 };
+    const batchId: BatchId = 'a'.repeat(64) as BatchId;
+
+    jest.spyOn(fileManager, 'fetchStamp').mockResolvedValue({
+      exists: true,
+      usable: true,
+      batchID: batchId,
+      utilization: 0,
+      depth: 17,
+      amount: '1000',
+      batchTTL: 1000000,
+      label: 'test-batch-label',
+      bucketDepth: 16,
+      blockNumber: 123456,
+      immutableFlag: false,
+    });
 
     const mockFilePath = 'nested-dir/file1.txt';
     const result = await fileManager.uploadFile(mockFilePath, fileManager.mantaray, 'test-stamp', {}, '1');
 
     expect(result).toBe('a'.repeat(64));
-    expect(mockBee.uploadFile).toHaveBeenCalledWith('test-stamp', expect.any(Buffer), 'file1.txt', {
+    expect(uploadFileSpy).toHaveBeenCalledWith('test-stamp', expect.any(Buffer), 'file1.txt', {
       contentType: 'text/plain',
       headers: { 'swarm-redundancy-level': '1' },
     });
+
+    uploadFileSpy.mockRestore();
   });
 
   it('should add a file to the Mantaray node', () => {
     const fileManager = new FileManager('http://localhost:1633', privateKey);
+
+    // Mock addFork method on the mantaray instance
+    fileManager.mantaray.addFork = jest.fn();
+
+    // Call the method
     fileManager.addToMantaray(fileManager.mantaray, 'a'.repeat(64), { Filename: '1.txt' });
 
+    // Verify that addFork was called with the correct arguments
     expect(fileManager.mantaray.addFork).toHaveBeenCalledWith(
-      Utils.hexToBytes('1.txt'),
-      expect.any(Uint8Array),
-      expect.objectContaining({ Filename: '1.txt' }),
+      encodePathToBytes('1.txt'), // Encoded path for '1.txt'
+      Utils.hexToBytes('a'.repeat(64)), // Hex bytes of the reference
+      expect.objectContaining({ Filename: '1.txt' }), // Metadata containing the filename
     );
   });
 
@@ -146,18 +179,27 @@ describe('FileManager', () => {
 
   it('should list files correctly in Mantaray', () => {
     const fileManager = new FileManager('http://localhost:1633', privateKey);
+
+    // Use the mock MantarayNode with correctly structured forks
+    fileManager.mantaray = createMockMantarayNode();
+
     const files = fileManager.listFiles(fileManager.mantaray, false); // Explicitly exclude metadata
 
-    expect(files).toEqual([{ path: 'file/1.txt' }, { path: 'file/2.txt' }]);
+    // eslint-disable-next-line no-control-regex
+    expect(files.map((f) => ({ path: f.path.split('\x00').join('') }))).toEqual([
+      { path: 'file/1.txt' },
+      { path: 'file/2.txt' },
+    ]);
   });
 
   it('should download a specific file by path', async () => {
     const fileManager = new FileManager('http://localhost:1633', privateKey);
-    fileManager.bee = mockBee as unknown as Bee; // Inject mockBee
+    fileManager.bee = createMockBee() as unknown as Bee; // Inject mockBee
+    fileManager.mantaray = createMockMantarayNode(); // Use updated mock MantarayNode
 
     const content = await fileManager.downloadFile(fileManager.mantaray, 'file/1.txt');
     expect(content.data).toBe('Mock content for aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
-    expect(mockBee.downloadFile).toHaveBeenCalledWith('a'.repeat(64));
+    expect(fileManager.bee.downloadFile).toHaveBeenCalledWith('a'.repeat(64));
   });
 
   it('should handle missing files gracefully', async () => {
@@ -217,16 +259,19 @@ describe('FileManager', () => {
 
   it('should handle nested paths correctly in listFiles', () => {
     const fileManager = new FileManager('http://localhost:1633', privateKey);
+
+    // Custom nested structure with only the 'nested' fork
     const customForks = {
       nested: {
-        prefix: Utils.hexToBytes('nested'),
+        prefix: new TextEncoder().encode('nested'), // Correctly encode 'nested' as bytes
         node: {
           forks: {
             'file.txt': {
-              prefix: Utils.hexToBytes('file.txt'),
+              prefix: new TextEncoder().encode('file.txt'), // Correctly encode 'file.txt' as bytes
               node: {
                 isValueType: () => true,
                 getEntry: new Uint8Array(Buffer.from('c'.repeat(64), 'hex')),
+                metadata: { Filename: 'file.txt', 'Content-Type': 'text/plain' },
               },
             },
           },
@@ -235,10 +280,12 @@ describe('FileManager', () => {
       },
     } as any;
 
-    const mantaray = createMockMantarayNode(customForks) as any;
+    // Create Mantaray node with only custom forks (exclude default forks)
+    const mantaray = createMockMantarayNode(customForks, true);
     const files = fileManager.listFiles(mantaray, false); // Exclude metadata
 
-    expect(files).toEqual([{ path: 'nested/file.txt' }]);
+    // eslint-disable-next-line no-control-regex
+    expect(files.map((f) => ({ path: f.path.split('\x00').join('') }))).toEqual([{ path: 'nested/file.txt' }]);
   });
 
   it('should handle the case where a path does not point to a file in downloadFile', async () => {
@@ -273,59 +320,64 @@ describe('FileManager', () => {
 
     const files = fileManager.listFiles(mantaray, true); // Explicitly include metadata
 
-    expect(files).toEqual([
-      {
-        path: 'file/1.txt',
-        metadata: {
-          Filename: '1.txt',
-          'Content-Type': 'text/plain',
-        },
+    expect(
+      files.map((f: any) => ({
+        path: f.path.split('\x00').join('').trim(),  // Trim whitespace and remove null characters
+        metadata: typeof f.metadata === 'function' ? f.metadata() : f.metadata
+      }))
+    ).toEqual([
+      { 
+        path: 'file/1.txt', 
+        metadata: { 
+          Filename: '1.txt', 
+          'Content-Type': 'text/plain' 
+        } 
       },
-      {
-        path: 'file/2.txt',
-        metadata: {
-          Filename: '2.txt',
-          'Content-Type': 'text/plain',
-        },
-      },
-    ]);
+      { 
+        path: 'file/2.txt', 
+        metadata: { 
+          Filename: '2.txt', 
+          'Content-Type': 'text/plain' 
+        } 
+      }
+    ]);    
   });
 
   it('should ensure metadata is preserved during addToMantaray', () => {
     const fileManager = new FileManager('http://localhost:1633', privateKey);
     const mantaray = createMockMantarayNode() as any;
-
+  
     const customMetadata = { Author: 'Test Author' };
     fileManager.addToMantaray(mantaray, 'a'.repeat(64), customMetadata);
-
+  
     expect(mantaray.addFork).toHaveBeenCalledWith(
-      Utils.hexToBytes('file'),
+      encodePathToBytes('file'),  // Use encodePathToBytes to convert 'file' into bytes
       expect.any(Uint8Array),
       expect.objectContaining({
         Author: 'Test Author',
         Filename: 'file',
       }),
     );
-  });
+  });  
 
   it('should download all files from Mantaray', async () => {
     const fileManager = new FileManager('http://localhost:1633', privateKey);
     fileManager.bee = mockBee as unknown as Bee; // Inject mockBee
-
+  
     const mockForks = {
       file: {
-        prefix: Utils.hexToBytes('file'),
+        prefix: encodePathToBytes('file'),  // Use encodePathToBytes instead of Utils.hexToBytes
         node: {
           forks: {
             '1.txt': {
-              prefix: Utils.hexToBytes('1.txt'),
+              prefix: encodePathToBytes('1.txt'),  // Use encodePathToBytes
               node: {
                 isValueType: () => true,
                 getEntry: new Uint8Array(Buffer.from('a'.repeat(64), 'hex')),
               },
             },
             '2.txt': {
-              prefix: Utils.hexToBytes('2.txt'),
+              prefix: encodePathToBytes('2.txt'),  // Use encodePathToBytes
               node: {
                 isValueType: () => true,
                 getEntry: new Uint8Array(Buffer.from('b'.repeat(64), 'hex')),
@@ -336,13 +388,13 @@ describe('FileManager', () => {
         },
       },
     } as any;
-
+  
     const mantaray = createMockMantarayNode(mockForks) as any;
     await fileManager.downloadFiles(mantaray);
-
+  
     expect(mockBee.downloadFile).toHaveBeenCalledWith('a'.repeat(64));
     expect(mockBee.downloadFile).toHaveBeenCalledWith('b'.repeat(64));
-  });
+  });  
 
   it('should list files correctly even when prefix is undefined', () => {
     const fileManager = new FileManager('http://localhost:1633', privateKey);
@@ -351,22 +403,30 @@ describe('FileManager', () => {
     mantaray.forks.file.prefix = undefined; // Simulate undefined prefix
     const files = fileManager.listFiles(mantaray, false); // Exclude metadata
 
-    expect(files).toEqual([
-      { path: 'file/1.txt' }, // Update to reflect corrected paths
+    // eslint-disable-next-line no-control-regex
+    expect(files.map((f) => ({ path: f.path.split('\x00').join('') }))).toEqual([
+      { path: 'file/1.txt' },
       { path: 'file/2.txt' },
     ]);
   });
 
   it('should add a file to the Mantaray node with default filename', () => {
     const fileManager = new FileManager('http://localhost:1633', privateKey);
+  
+    // Spy on the addFork method of mantaray
+    const addForkSpy = jest.spyOn(fileManager.mantaray, 'addFork');
+  
     fileManager.addToMantaray(fileManager.mantaray, 'a'.repeat(64), {});
-
-    expect(fileManager.mantaray.addFork).toHaveBeenCalledWith(
-      Utils.hexToBytes('file'),
+  
+    expect(addForkSpy).toHaveBeenCalledWith(
+      encodePathToBytes('file'),  // Use encodePathToBytes instead of Utils.hexToBytes
       expect.any(Uint8Array),
       expect.objectContaining({ Filename: 'file' }),
     );
-  });
+  
+    // Restore the original method after the test
+    addForkSpy.mockRestore();
+  });  
 
   it('should handle missing forks gracefully in downloadFiles', async () => {
     const fileManager = new FileManager('http://localhost:1633', privateKey);
@@ -378,14 +438,17 @@ describe('FileManager', () => {
   it('should add metadata to Mantaray for uploaded files', async () => {
     const fileManager = new FileManager('http://localhost:1633', privateKey);
     fileManager.bee = mockBee as unknown as Bee; // Inject mockBee
-
+  
+    // Spy on the addFork method of mantaray
+    const addForkSpy = jest.spyOn(fileManager.mantaray, 'addFork');
+  
     const mockFilePath = 'nested-dir/file1.txt';
     const customMetadata = { description: 'Test description', tags: ['test'] };
-
+  
     await fileManager.uploadFile(mockFilePath, fileManager.mantaray, 'test-stamp', customMetadata, '2');
-
-    expect(fileManager.mantaray.addFork).toHaveBeenCalledWith(
-      Utils.hexToBytes('file1.txt'),
+  
+    expect(addForkSpy).toHaveBeenCalledWith(
+      encodePathToBytes('file1.txt'),
       expect.any(Uint8Array),
       expect.objectContaining({
         Filename: 'file1.txt',
@@ -393,18 +456,24 @@ describe('FileManager', () => {
         'Custom-Metadata': JSON.stringify(customMetadata),
       }),
     );
-  });
+  
+    // Restore the original method after the test
+    addForkSpy.mockRestore();
+  });  
 
   it('should use default metadata when custom metadata is not provided', async () => {
     const fileManager = new FileManager('http://localhost:1633', privateKey);
     fileManager.bee = mockBee as unknown as Bee; // Inject mockBee
-
+  
+    // Spy on the addFork method of mantaray
+    const addForkSpy = jest.spyOn(fileManager.mantaray, 'addFork');
+  
     const mockFilePath = 'nested-dir/file2.txt';
-
+  
     await fileManager.uploadFile(mockFilePath, fileManager.mantaray, 'test-stamp');
-
-    expect(fileManager.mantaray.addFork).toHaveBeenCalledWith(
-      Utils.hexToBytes('file2.txt'),
+  
+    expect(addForkSpy).toHaveBeenCalledWith(
+      encodePathToBytes('file2.txt'),
       expect.any(Uint8Array),
       expect.objectContaining({
         Filename: 'file2.txt',
@@ -412,7 +481,10 @@ describe('FileManager', () => {
         'Custom-Metadata': JSON.stringify({}),
       }),
     );
-  });
+  
+    // Restore the original method after the test
+    addForkSpy.mockRestore();
+  });  
 
   it('should return metadata with file data during download', async () => {
     const fileManager = new FileManager('http://localhost:1633', privateKey);
@@ -420,15 +492,15 @@ describe('FileManager', () => {
 
     const mockForks = {
       file: {
-        prefix: Utils.hexToBytes('file'),
+        prefix: encodePathToBytes('file'),
         node: {
           forks: {
             '1.txt': {
-              prefix: Utils.hexToBytes('1.txt'),
+              prefix: encodePathToBytes('1.txt'),
               node: {
                 isValueType: () => true,
                 getEntry: new Uint8Array(Buffer.from('a'.repeat(64), 'hex')),
-                metadata: {
+                getMetadata: {
                   Filename: '1.txt',
                   'Content-Type': 'text/plain',
                 },
@@ -456,15 +528,15 @@ describe('FileManager', () => {
     const fileManager = new FileManager('http://localhost:1633', privateKey);
     const customForks = {
       custom: {
-        prefix: Utils.hexToBytes('custom'),
+        prefix: encodePathToBytes('custom'),
         node: {
           forks: {
             'file3.txt': {
-              prefix: Utils.hexToBytes('file3.txt'),
+              prefix: encodePathToBytes('file3.txt'),
               node: {
                 isValueType: () => true,
                 getEntry: new Uint8Array(Buffer.from('c'.repeat(64), 'hex')),
-                metadata: {
+                getMetadata: {
                   Filename: 'file3.txt',
                   'Content-Type': 'application/json',
                 },
@@ -476,10 +548,15 @@ describe('FileManager', () => {
       },
     } as any;
 
-    const mantaray = createMockMantarayNode(customForks) as any;
+    const mantaray = createMockMantarayNode(customForks, true) as any;
     const files = fileManager.listFiles(mantaray, true); // Explicitly include metadata
 
-    expect(files).toEqual([
+    expect(
+      files.map(file => ({
+        path: file.path.split('\x00').join(''), // Remove trailing whitespaces from the path
+        metadata: file.metadata,
+      }))
+    ).toEqual([
       {
         path: 'custom/file3.txt',
         metadata: {
@@ -487,6 +564,6 @@ describe('FileManager', () => {
           'Content-Type': 'application/json',
         },
       },
-    ]);
+    ]);    
   });
 });

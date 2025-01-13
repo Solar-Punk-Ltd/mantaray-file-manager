@@ -6,7 +6,7 @@ import path from 'path';
 
 import { DEFAULT_FEED_TYPE, STAMP_LIST_TOPIC } from './constants';
 import { FileWithMetadata, StampList, StampWithMetadata } from './types';
-import { encodePathToBytes, getContentType } from './utils';
+import { decodeBytesToPath, encodePathToBytes, getContentType } from './utils';
 
 export class FileManager {
   // TODO: private vars
@@ -16,8 +16,10 @@ export class FileManager {
 
   private stampList: StampWithMetadata[];
   private nextStampFeedIndex: string;
+  private wallet: Wallet;
   private privateKey: string;
   private address: string;
+  private topic: string;
 
   constructor(beeUrl: string, privateKey: string) {
     if (!beeUrl) {
@@ -31,12 +33,12 @@ export class FileManager {
     this.stampList = [];
     this.nextStampFeedIndex = '';
     this.privateKey = privateKey;
-    this.address = new Wallet(privateKey).address;
+    this.wallet = new Wallet(privateKey);
+    this.address = this.wallet.address;
+    this.topic = Utils.bytesToHex(Utils.keccak256Hash(STAMP_LIST_TOPIC));
 
     this.mantaray = new MantarayNode();
     this.importedFiles = [];
-
-    // Create personalized feed
   }
 
   // TODO: use allSettled for file fetching and only save the ones that are successful
@@ -72,16 +74,58 @@ export class FileManager {
     }
   }
 
-  async intializeMantarayUsingFeed() {
-    //
+  async initializeFeed(stamp: string | BatchId) {
+    console.log('Initializing wallet and checking for existing feed...');
+
+    const reader = this.bee.makeFeedReader('sequence', this.topic, this.wallet.address);
+
+    try {
+      const { reference } = await reader.download();
+      console.log(`Existing feed found. Reference: ${reference}`);
+
+      const manifestData = await this.bee.downloadData(reference);
+      this.mantaray.deserialize(Buffer.from(manifestData));
+      console.log('Mantaray structure initialized from feed.');
+    } catch (error) {
+      console.log('No existing feed found. Initializing new Mantaray structure...');
+      this.mantaray = new MantarayNode();
+      await this.saveFeed(stamp);
+    }
   }
 
-  async loadMantaray(manifestReference: Reference) {
-    const loadFunction = async (address: MantarayRef): Promise<Uint8Array> => {
-      return this.bee.downloadData(Utils.bytesToHex(address));
-    };
+  async saveFeed(stamp: string | BatchId) {
+    console.log('Saving Mantaray structure to feed...');
 
-    this.mantaray.load(loadFunction, Utils.hexToBytes(manifestReference));
+    // Save the Mantaray structure and get the manifest reference (Uint8Array)
+    const manifestReference = await this.mantaray.save(async (data) => {
+      const uploadResponse = await this.bee.uploadData(stamp, data);
+      return Utils.hexToBytes(uploadResponse.reference) as Utils.Bytes<64>; // Ensure 64-byte reference
+    });
+
+    const hexManifestReference = Utils.bytesToHex(manifestReference, 128); // Ensure hex string length is 128
+
+    // Create a feed writer and upload the manifest reference
+    const writer = this.bee.makeFeedWriter('sequence', this.topic, this.wallet.privateKey);
+    await writer.upload(stamp, hexManifestReference as Reference); // Explicitly cast to Reference
+
+    console.log(`Feed updated with reference: ${hexManifestReference}`);
+  }
+
+  async fetchFeed() {
+    console.log('Fetching the latest feed reference...');
+    if (!this.wallet) {
+      throw new Error('Wallet not initialized. Please call initializeFeed first.');
+    }
+
+    const reader = this.bee.makeFeedReader('sequence', this.topic, this.wallet.address);
+    try {
+      const { reference } = await reader.download();
+      console.log(`Latest feed reference fetched: ${reference}`);
+      return reference;
+    } catch (error: unknown) {
+      console.error('Failed to fetch feed:', (error as Error).message);
+      throw new Error('Could not fetch feed reference.');
+    }
   }
 
   // TODO: method to list new stamp with files
@@ -177,17 +221,17 @@ export class FileManager {
     return this.stampList.find((s) => s.stamp.batchID === batchId);
   }
 
-  async fetchStamp(batchId: string | BatchId): Promise<PostageBatch | undefined> {
+  async fetchStamp(batchId: string | { batchID: string }): Promise<PostageBatch | undefined> {
     try {
-      // TODO: what if stamp is not usable
-      const newStamp = await this.bee.getPostageBatch(batchId);
-      if (newStamp.exists && newStamp.usable) {
+      const id = typeof batchId === 'string' ? batchId : batchId.batchID;
+      const newStamp = await this.bee.getPostageBatch(id);
+      if (newStamp?.exists && newStamp.usable) {
         this.stampList.push({ stamp: newStamp });
         return newStamp;
       }
       return undefined;
     } catch (error: any) {
-      console.error(`Failed to get stamp with bathcID ${batchId}: ${error}`);
+      console.error(`Failed to get stamp with batchID ${batchId}: ${error.message}`);
       return undefined;
     }
   }
@@ -253,7 +297,7 @@ export class FileManager {
     let currentNode = mantaray;
 
     for (const segment of segments) {
-      const segmentBytes = encodePathToBytes(segment);
+      const segmentBytes = encodePathToBytes(segment); // Use encodePathToBytes here
       const fork = Object.values(currentNode.forks || {}).find((f) => Buffer.compare(f.prefix, segmentBytes) === 0);
 
       if (!fork) throw new Error(`Path segment not found: ${segment}`);
@@ -431,6 +475,69 @@ export class FileManager {
     return hexReference;
   }
 
+  searchFilesByName(fileNameQuery: string, includeMetadata = false) {
+    console.log(`Searching for files by name: ${fileNameQuery}`);
+
+    const allFiles = this.listFiles(this.mantaray, includeMetadata);
+
+    const filteredFiles = allFiles.filter((file) => path.posix.basename(file.path).includes(fileNameQuery));
+
+    return filteredFiles;
+  }
+
+  searchFiles(
+    {
+      fileName,
+      directory,
+      metadata,
+      minSize,
+      maxSize,
+      extension,
+    }: {
+      fileName?: string;
+      directory?: string;
+      metadata?: Record<string, string>;
+      minSize?: number;
+      maxSize?: number;
+      extension?: string;
+    },
+    includeMetadata = false,
+  ) {
+    let results = this.listFiles(this.mantaray, true);
+
+    if (fileName) {
+      results = results.filter((file) => path.posix.basename(file.path).includes(fileName));
+    }
+
+    if (directory) {
+      results = results.filter((file) => path.posix.dirname(file.path).includes(directory));
+    }
+
+    if (metadata) {
+      results = results.filter((file) => {
+        for (const [key, value] of Object.entries(metadata)) {
+          if (file.metadata?.[key] !== value) {
+            return false;
+          }
+        }
+        return true;
+      });
+    }
+
+    if (minSize !== undefined && maxSize !== undefined) {
+      results = results.filter((file) => {
+        const size = parseInt(file.metadata?.['Content-Size'] ?? '0', 10); // Default to '0' if undefined
+        return size >= minSize && size <= maxSize;
+      });
+    }
+
+    if (extension) {
+      results = results.filter((file) => path.posix.extname(file.path) === extension);
+    }
+
+    return results.map((file) => (includeMetadata ? file : { path: file.path }));
+  }
+
   listFiles(mantaray: MantarayNode | undefined, includeMetadata = false) {
     mantaray = mantaray || this.mantaray;
     console.log('Listing files in Mantaray...');
@@ -447,7 +554,7 @@ export class FileManager {
       if (!forks) continue;
 
       for (const [key, fork] of Object.entries(forks)) {
-        const prefix = fork.prefix ? Utils.bytesToHex(fork.prefix) : key || 'unknown';
+        const prefix = fork.prefix ? decodeBytesToPath(fork.prefix) : key || 'unknown'; // Decode path
         const fullPath = path.join(currentPath, prefix);
 
         if (fork.node.isValueType()) {
@@ -463,10 +570,8 @@ export class FileManager {
             }
           }
 
-          const fileEntry = { metadata, path: originalPath };
-          if (includeMetadata) {
-            fileEntry.metadata = metadata;
-          }
+          // Conditionally include metadata
+          const fileEntry = includeMetadata ? { metadata, path: originalPath } : { path: originalPath };
 
           fileList.push(fileEntry);
         } else {
