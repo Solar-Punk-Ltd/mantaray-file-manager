@@ -463,7 +463,7 @@ export class FileManager {
             }
           }
 
-          const fileEntry = { metadata, path: decodeEncodedPath(originalPath) };
+          const fileEntry: any = { path: decodeEncodedPath(originalPath) };
           if (includeMetadata) {
             fileEntry.metadata = metadata;
           }
