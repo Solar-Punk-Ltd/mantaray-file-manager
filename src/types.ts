@@ -1,8 +1,9 @@
-import { BatchId, PostageBatch, Reference } from '@ethersphere/bee-js';
+import { BatchId, Reference } from '@ethersphere/bee-js';
 
-export interface FileWithMetadata {
+// TODO: maybe rename to FileInfo
+export interface MetadataFile {
   reference: string | Reference;
-  batchId?: string | BatchId;
+  batchId: string | BatchId;
   shared?: boolean;
   name?: string;
   owner?: string;
@@ -11,16 +12,15 @@ export interface FileWithMetadata {
   timestamp?: number;
 }
 
-export interface StampWithMetadata {
-  stamp: PostageBatch;
-  references?: string[] | Reference[];
-  feedReference?: string | Reference;
-  nextIndex?: number;
+export interface OwnerFeedData {
+  history: string;
+  metadataListReference: string;
 }
 
-export interface StampList {
-  filesOfStamps: Map<string, string[]>;
-}
+// export interface MetadataFile {
+//   history: string;
+//   metadataReference: string;
+// }
 
 // TODO: unify own files with shared and add stamp data potentially
 export interface SharedMessage {

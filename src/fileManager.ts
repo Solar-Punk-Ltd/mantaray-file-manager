@@ -4,11 +4,14 @@ import {
   BeeRequestOptions,
   Data,
   ENCRYPTED_REFERENCE_HEX_LENGTH,
+  FileUploadOptions,
   GranteesResult,
   PostageBatch,
   PssSubscription,
+  RedundancyLevel,
   Reference,
   REFERENCE_HEX_LENGTH,
+  UploadRedundancyOptions,
   Utils,
 } from '@ethersphere/bee-js';
 import { MantarayNode, MetadataMapping, Reference as MantarayRef } from '@solarpunkltd/mantaray-js';
@@ -16,8 +19,14 @@ import { Wallet } from 'ethers';
 import { readFileSync } from 'fs';
 import path from 'path';
 
-import { DEFAULT_FEED_TYPE, METADATA_TOPIC, SHARED_INBOX_TOPIC, STAMP_LIST_TOPIC } from './constants';
-import { FileWithMetadata, SharedMessage, StampList, StampWithMetadata } from './types';
+import {
+  DEFAULT_FEED_TYPE,
+  METADATA_TOPIC,
+  OWNER_FEED_STAMP_LABEL,
+  REFERENCE_LIST_TOPIC,
+  SHARED_INBOX_TOPIC,
+} from './constants';
+import { MetadataFile, OwnerFeedData, SharedMessage } from './types';
 import { assertSharedMessage, decodeBytesToPath, encodePathToBytes, getContentType } from './utils';
 
 export class FileManager {
@@ -25,10 +34,11 @@ export class FileManager {
   // TODO: store shared refs and own files in the same array ?
   public bee: Bee;
   public mantaray: MantarayNode;
-  public importedFiles: FileWithMetadata[];
+  public importedFiles: MetadataFile[];
 
-  private stampList: StampWithMetadata[];
-  private nextStampFeedIndex: string;
+  private stampList: PostageBatch[];
+  private metadataFileList: MetadataFile[];
+  private nextOwnerFeedIndex: string;
   private wallet: Wallet;
   private privateKey: string;
   private granteeLists: string[];
@@ -49,18 +59,21 @@ export class FileManager {
     console.log('Initializing Bee client...');
     this.bee = new Bee(beeUrl);
     this.stampList = [];
-    this.nextStampFeedIndex = '';
+    this.metadataFileList = [];
+    this.nextOwnerFeedIndex = '';
     this.privateKey = privateKey;
     this.wallet = new Wallet(privateKey);
     this.address = this.wallet.address;
-    this.topic = Utils.bytesToHex(Utils.keccak256Hash(STAMP_LIST_TOPIC));
+    this.topic = this.bee.makeFeedTopic(REFERENCE_LIST_TOPIC);
 
     this.mantaray = new MantarayNode();
     this.importedFiles = [];
+    this.granteeLists = [];
     this.sharedWithMe = [];
     this.sharedSubscription = {} as PssSubscription;
   }
 
+  // Start init methods
   // TODO: use allSettled for file fetching and only save the ones that are successful
   async initialize(items: any | undefined): Promise<void> {
     try {
@@ -69,20 +82,28 @@ export class FileManager {
       console.log('Error during shared inbox subscription: ', error);
     }
 
-    console.log('Importing stamps and references...');
     try {
+      console.log('Importing stamps...');
       await this.initStamps();
-      if (this.stampList.length > 0) {
-        console.log('Using stamp list for initialization.');
-        for (const elem of this.stampList) {
-          if (elem.references !== undefined && elem.references.length > 0) {
-            await this.importReferences(elem.references as Reference[], elem.stamp.batchID);
-          }
-        }
-      }
     } catch (error: any) {
       console.error(`[ERROR] Failed to initialize stamps: ${error.message}`);
       throw error;
+    }
+
+    try {
+      console.log('Importing metadata of files...');
+      await this.initMetadataFileList();
+    } catch (error: any) {
+      console.error(`[ERROR] Failed to initialize file metadata: ${error.message}`);
+      throw error;
+    }
+
+    // if stamp is not found than the file cannot be downloaded? is this necessary ??
+    for (const stamp of this.stampList) {
+      const mtdtIx = this.metadataFileList.findIndex((f) => stamp.batchID === f.batchId);
+      if (mtdtIx === undefined) {
+        this.metadataFileList.splice(mtdtIx, 1);
+      }
     }
 
     try {
@@ -99,10 +120,47 @@ export class FileManager {
       throw error;
     }
   }
-  // TODO: is this method necessary ?
-  async intializeMantarayUsingFeed(): Promise<void> {
-    //
+
+  // TODO: import other stamps in order to topup: owner(s) ?
+  async initStamps(): Promise<void> {
+    try {
+      this.stampList = await this.getUsableStamps();
+      console.log('Usable stamps fetched successfully.');
+    } catch (error: any) {
+      console.error(`Failed to fetch stamps: ${error}`);
+      throw error;
+    }
   }
+
+  // TODO: shared file feed similarly
+  // TODO: util func to make options for act headers
+  async initMetadataFileList(): Promise<void> {
+    const topicHex = this.bee.makeFeedTopic(REFERENCE_LIST_TOPIC);
+    const feedReader = this.bee.makeFeedReader(DEFAULT_FEED_TYPE, topicHex, this.address);
+    try {
+      const latestFeedData = await feedReader.download();
+      this.nextOwnerFeedIndex = latestFeedData.feedIndexNext;
+
+      const ownerFeedRawData = await this.bee.downloadData(latestFeedData.reference);
+      const ownerFeedData = JSON.parse(JSON.stringify(ownerFeedRawData)) as OwnerFeedData;
+      const options: BeeRequestOptions = {
+        headers: { 'swarm-act-history-address': ownerFeedData.history, 'swarm-act-publisher': this.address },
+      } as const;
+      // TODO: act encrpyt the metadatalist refs??
+      const metadataList = JSON.parse(
+        (await this.bee.downloadData(ownerFeedData.metadataListReference, options)).text(),
+      ) as MetadataFile[];
+      for (const mtdt of metadataList) {
+        const metadata = JSON.parse((await this.bee.downloadData(mtdt.reference)).text()) as MetadataFile;
+        this.metadataFileList.push(metadata);
+      }
+      console.log('Stamps fetched from feed.');
+    } catch (error: any) {
+      console.error(`Failed to fetch stamps from feed: ${error}`);
+      return;
+    }
+  }
+  // End init methods
 
   async loadMantaray(manifestReference: Reference): Promise<void> {
     const loadFunction = async (address: MantarayRef): Promise<Uint8Array> => {
@@ -166,87 +224,28 @@ export class FileManager {
     }
   }
 
-  // TODO: method to list new stamp with files
-  // TODO: how and how long to store the stamps feed data ?
-  // TODO: it seems inefficient to update always with the whole fileref array
-  async updateStampData(stamp: string | BatchId): Promise<void> {
-    const topicHex = this.bee.makeFeedTopic(STAMP_LIST_TOPIC);
-    const feedWriter = this.bee.makeFeedWriter(DEFAULT_FEED_TYPE, topicHex, this.privateKey);
+  // Start stamp methods
+  async getUsableStamps(): Promise<PostageBatch[]> {
     try {
-      const stampData = {
-        filesOfStamps: this.stampList.map((s) => [s.stamp.batchID, s.references]),
-      } as unknown as StampList;
-      const uploadResult = await this.bee.uploadData(stamp, JSON.stringify(stampData), { encrypt: true });
-      const writeResult = await feedWriter.upload(stamp, uploadResult.reference, {
-        index: this.nextStampFeedIndex,
-      });
-      console.log('Stamp feed updated: ', writeResult.reference);
-    } catch (error: any) {
-      console.error(`Failed to update stamp feed: ${error}`);
-      return;
-    }
-  }
-
-  // TODO: fetch usable stamps or read from feed
-  // TODO: import other stamps in order to topup: owner(s) ?
-  async initStamps(): Promise<void> {
-    try {
-      this.stampList = await this.getUsableStamps();
-      console.log('Usable stamps fetched successfully.');
-    } catch (error: any) {
-      console.error(`Failed to update stamps: ${error}`);
-      throw error;
-    }
-
-    // TODO: stamps of other users -> feature to fetch other nodes' stamp data
-
-    const topicHex = this.bee.makeFeedTopic(STAMP_LIST_TOPIC);
-    const feedReader = this.bee.makeFeedReader(DEFAULT_FEED_TYPE, topicHex, this.address);
-    try {
-      const latestFeedData = await feedReader.download();
-      this.nextStampFeedIndex = latestFeedData.feedIndexNext;
-      const stampListData = (await this.bee.downloadData(latestFeedData.reference)).text();
-      const stampList = JSON.parse(stampListData) as StampList;
-      for (const [batchId, fileRefs] of stampList.filesOfStamps) {
-        // if (this.stampList.find((s) => s.stamp.batchID === stamp.stamp.batchID) === undefined) {
-        //   await this.fetchStamp(stamp.stamp.batchID);
-        // }
-        const stampIx = this.stampList.findIndex((s) => s.stamp.batchID === batchId);
-        if (stampIx !== -1) {
-          if (fileRefs.length > 0) {
-            this.stampList[stampIx].references = [...fileRefs];
-          }
-        }
-      }
-      console.log('Stamps fetched from feed.');
-    } catch (error: any) {
-      console.error(`Failed to fetch stamps from feed: ${error}`);
-      return;
-    }
-  }
-
-  async getUsableStamps(): Promise<StampWithMetadata[]> {
-    try {
-      const stamps = (await this.bee.getAllPostageBatch()).filter((s) => s.usable);
-      return stamps.map((s) => ({ stamp: s, files: [] }));
+      return (await this.bee.getAllPostageBatch()).filter((s) => s.usable);
     } catch (error: any) {
       console.error(`Failed to get usable stamps: ${error}`);
       return [];
     }
   }
 
-  async filterBatches(ttl?: number, utilization?: number, capacity?: number): Promise<StampWithMetadata[]> {
+  async filterBatches(ttl?: number, utilization?: number, capacity?: number): Promise<PostageBatch[]> {
     // TODO: clarify depth vs capacity
     return this.stampList.filter((s) => {
-      if (utilization !== undefined && s.stamp.utilization <= utilization) {
+      if (utilization !== undefined && s.utilization <= utilization) {
         return false;
       }
 
-      if (capacity !== undefined && s.stamp.depth <= capacity) {
+      if (capacity !== undefined && s.depth <= capacity) {
         return false;
       }
 
-      if (ttl !== undefined && s.stamp.batchTTL <= ttl) {
+      if (ttl !== undefined && s.batchTTL <= ttl) {
         return false;
       }
 
@@ -254,8 +253,16 @@ export class FileManager {
     });
   }
 
-  async getCachedStamp(batchId: string | BatchId): Promise<StampWithMetadata | undefined> {
-    return this.stampList.find((s) => s.stamp.batchID === batchId);
+  async getStamps(): Promise<PostageBatch[]> {
+    return this.stampList;
+  }
+
+  async getOwnerFeedStamp(): Promise<PostageBatch | undefined> {
+    return this.stampList.find((s) => s.label === OWNER_FEED_STAMP_LABEL);
+  }
+
+  async getCachedStamp(batchId: string | BatchId): Promise<PostageBatch | undefined> {
+    return this.stampList.find((s) => s.batchID === batchId);
   }
 
   async fetchStamp(batchId: string | { batchID: string }): Promise<PostageBatch | undefined> {
@@ -263,7 +270,7 @@ export class FileManager {
       const id = typeof batchId === 'string' ? batchId : batchId.batchID;
       const newStamp = await this.bee.getPostageBatch(id);
       if (newStamp?.exists && newStamp.usable) {
-        this.stampList.push({ stamp: newStamp });
+        this.stampList.push(newStamp);
         return newStamp;
       }
       return undefined;
@@ -272,10 +279,7 @@ export class FileManager {
       return undefined;
     }
   }
-
-  async getStamps(): Promise<StampWithMetadata[] | undefined> {
-    return this.stampList;
-  }
+  // End stamp methods
 
   // TODO: only download metadata files for listing -> only download the whole file on demand
   async importReferences(referenceList: Reference[], batchId?: string, isLocal = false): Promise<void> {
@@ -449,10 +453,9 @@ export class FileManager {
   async uploadFile(
     file: string,
     mantaray: MantarayNode | undefined,
-    stamp: string | BatchId,
+    batchId: string | BatchId,
     customMetadata = {},
-    redundancyLevel = '1',
-    save = true,
+    redundancyLevel = RedundancyLevel.MEDIUM,
   ): Promise<string> {
     mantaray = mantaray || this.mantaray;
     console.log(`Uploading file: ${file}`);
@@ -469,39 +472,60 @@ export class FileManager {
     };
 
     const uploadHeaders = {
-      contentType,
+      contentType: contentType,
       act: true,
-      headers: {
-        'swarm-redundancy-level': redundancyLevel,
-      },
-    };
+      redundancyLevel: redundancyLevel,
+    } as FileUploadOptions & UploadRedundancyOptions;
 
     try {
-      const uploadResponse = await this.bee.uploadFile(stamp, fileData, fileName, uploadHeaders);
+      const uploadResponse = await this.bee.uploadFile(batchId, fileData, fileName, uploadHeaders);
       this.addToMantaray(mantaray, uploadResponse.reference, metadata);
 
-      // if (save) {
-      console.log('Saving Mantaray node...');
-      const { eRef, hRef } = await this.saveMantaray(mantaray, stamp);
-      // }
+      const metadataFile = {
+        reference: uploadResponse.reference,
+        batchId: batchId,
+        name: fileName,
+        owner: this.address,
+        historyRef: uploadResponse.historyAddress,
+        timestamp: new Date().getTime(),
+        eGlRef: undefined,
+      } as MetadataFile;
 
-      // TODO: handle stamplist and filelist here
-      const stampIx = this.stampList.findIndex((s) => s.stamp.batchID === stamp);
-      if (stampIx === -1) {
-        const newStamp = await this.fetchStamp(stamp);
-        // TODO: what to do here ? batch should already be usable
-        if (newStamp === undefined) {
-          throw new Error(`Stamp not found: ${stamp}`);
-        }
+      // TODO: always update everything with the same redundancy level ??
+      try {
+        const uploadMetadataResponse = await this.bee.uploadFile(
+          batchId,
+          JSON.stringify(metadataFile),
+          'metadata.json',
+          {
+            contentType: 'application/json',
+            act: true,
+            redundancyLevel: redundancyLevel,
+          },
+        );
+        const topicHex = this.bee.makeFeedTopic(uploadMetadataResponse.reference);
+        const feedWriter = this.bee.makeFeedWriter(DEFAULT_FEED_TYPE, topicHex, this.privateKey);
 
-        this.stampList.push({ stamp: newStamp, references: [eRef] });
-      } else if (this.stampList[stampIx].references === undefined) {
-        this.stampList[stampIx].references = [eRef];
-      } else {
-        this.stampList[stampIx].references.push(eRef);
+        const uploadResult = await this.bee.uploadData(batchId, uploadMetadataResponse.historyAddress);
+        const feedWriteResult = await feedWriter.upload(batchId, uploadResult.reference, {
+          index: undefined, // todo: keep track of the latest index ??
+          act: true,
+        });
+
+        console.log('File metadata feed updated: ', feedWriteResult.reference);
+        this.addToMantaray(mantaray, feedWriteResult.reference, metadata);
+      } catch (error: any) {
+        console.error(`Failed to update file metadata feed: ${error}`);
       }
 
-      await this.updateStampData(stamp);
+      // TODO: wrapped mantaray
+      await this.updateWrappedMantaray();
+      this.metadataFileList.push(metadataFile);
+
+      console.log('Saving Mantaray node...');
+      const { eRef, hRef } = await this.saveMantaray(mantaray, batchId);
+
+      await this.updateMetadataFileList(hRef);
 
       console.log(`File uploaded successfully: ${file}, Reference: ${eRef}`);
       return eRef;
@@ -751,6 +775,42 @@ export class FileManager {
     return contents;
   }
 
+  // Start feed handler methods
+  async updateWrappedMantaray(): Promise<string | undefined> {}
+
+  async updateMetadataFileList(): Promise<void> {
+    const ownerFeedStamp = await this.getOwnerFeedStamp();
+    if (!ownerFeedStamp) {
+      console.error('Owner feed stamp is not found.');
+      return;
+    }
+
+    const ownerFeedTopicHex = this.bee.makeFeedTopic(REFERENCE_LIST_TOPIC);
+    const ownerFeedWriter = this.bee.makeFeedWriter(DEFAULT_FEED_TYPE, ownerFeedTopicHex, this.privateKey);
+    try {
+      const uploadResult = await this.bee.uploadData(ownerFeedStamp.batchID, JSON.stringify(this.metadataFileList), {
+        act: true,
+      });
+      const ownerFeedData = {
+        history: uploadResult.historyAddress,
+        metadataListReference: uploadResult.reference,
+      } as OwnerFeedData;
+      const ownerFeedRawDataUploadResult = await this.bee.uploadData(
+        ownerFeedStamp.batchID,
+        JSON.stringify(ownerFeedData),
+      );
+      const writeResult = await ownerFeedWriter.upload(ownerFeedStamp.batchID, ownerFeedRawDataUploadResult.reference, {
+        index: this.nextOwnerFeedIndex,
+      });
+      console.log('Metdata and owner feed updated: ', writeResult.reference);
+    } catch (error: any) {
+      console.error(`Failed to update metdata and owner feed: ${error}`);
+      return;
+    }
+  }
+  // Start feed handler methods
+
+  // Start grantee methods
   // fetches the list of grantees under the given reference
   async getGrantees(eGlRef: string | Reference): Promise<string[] | undefined> {
     if (eGlRef.length !== REFERENCE_HEX_LENGTH) {
@@ -774,37 +834,15 @@ export class FileManager {
     }
   }
 
+  // TODO: do not store encrypted grantee ref in the wrapedd mantaray just in the owner mtdt feed
   // fetches the list of grantees who can access the file reference
   async getGranteesOfFile(fileRef: string | Reference): Promise<string[] | undefined> {
-    const file = this.importedFiles.find((f) => f.reference === fileRef);
+    const file = this.metadataFileList.find((f) => f.reference === fileRef);
     if (file === undefined || file.eGlRef === undefined) {
       console.error('File or grantee ref not found for reference: ', fileRef);
       return undefined;
     }
     return await this.getGrantees(file.eGlRef);
-  }
-
-  async updateFileMetadata(file: FileWithMetadata): Promise<string | undefined> {
-    if (!file.batchId) {
-      console.error('No batchId provided for file metadata update.');
-      return;
-    }
-
-    const topicHex = this.bee.makeFeedTopic(METADATA_TOPIC + file.reference);
-    const feedWriter = this.bee.makeFeedWriter(DEFAULT_FEED_TYPE, topicHex, this.privateKey);
-    try {
-      const uploadResult = await this.bee.uploadData(file.batchId, JSON.stringify(file), {
-        encrypt: true,
-      });
-      const writeResult = await feedWriter.upload(file.batchId, uploadResult.reference, {
-        index: undefined, // todo: keep track of the latest index ??
-      });
-      console.log('File metadata feed updated: ', writeResult.reference);
-      return writeResult.reference;
-    } catch (error: any) {
-      console.error(`Failed to update file metadata feed: ${error}`);
-      return undefined;
-    }
   }
 
   // TODO: separate revoke function or frontend will handle it by creating a new act ?
@@ -815,7 +853,7 @@ export class FileManager {
   // updates the list of grantees who can access the file reference under the history reference
   async handleGrantees(
     batchId: string | BatchId,
-    file: FileWithMetadata,
+    file: MetadataFile,
     grantees: {
       add?: string[];
       revoke?: string[];
@@ -863,7 +901,9 @@ export class FileManager {
       return undefined;
     }
   }
+  // End grantee methods
 
+  // Start share methods
   subscribeToSharedInbox(): PssSubscription {
     return this.bee.pssSubscribe(SHARED_INBOX_TOPIC, {
       onMessage: (message) => {
@@ -970,7 +1010,7 @@ export class FileManager {
     }
   }
   // TODO: maybe store only the encrypted refs for security and use
-  async downloadSharedItem(file: FileWithMetadata, path?: string): Promise<Data | undefined> {
+  async downloadSharedItem(file: MetadataFile, path?: string): Promise<Data | undefined> {
     if (!this.sharedWithMe.find((msg) => msg.references.includes(file.reference))) {
       console.log('Cannot find reference in shared messages: ', file.reference);
       return undefined;
@@ -1001,4 +1041,5 @@ export class FileManager {
       return undefined;
     }
   }
+  // End share methods
 }
