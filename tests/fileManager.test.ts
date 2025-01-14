@@ -441,6 +441,220 @@ describe('FileManager - List Files', () => {
   });
 });
 
+describe('FileManager - Search Files by Name', () => {
+  const privateKey = hexlify(Utils.keccak256Hash('pkinput'));
+  let fileManager: FileManager;
+
+  beforeEach(() => {
+    fileManager = new FileManager('http://localhost:1633', privateKey);
+    fileManager.mantaray = createMockMantarayNode(); // Use default mock Mantaray
+  });
+
+  it('should return files matching the query', () => {
+    const result = fileManager.searchFilesByName('1.txt');
+    expect(result.map((f) => ({ path: f.path.split('\x00').join('') }))).toEqual([{ path: 'file/1.txt' }]);
+  });
+
+  it('should return multiple files when multiple match the query', () => {
+    const result = fileManager.searchFilesByName('file');
+    expect(result.map((f) => ({ path: f.path.split('\x00').join('') }))).toEqual([
+      { path: 'file/1.txt' },
+      { path: 'file/2.txt' },
+    ]);
+  });
+
+  it('should return an empty array when no files match the query', () => {
+    const result = fileManager.searchFilesByName('nonexistent');
+    expect(result).toEqual([]);
+  });
+
+  it('should return files with metadata when includeMetadata is true', () => {
+    const result = fileManager.searchFilesByName('1.txt', true);
+    expect(
+      result.map((f) => ({
+        path: f.path.split('\x00').join(''),
+        metadata: f.metadata,
+      })),
+    ).toEqual([
+      {
+        path: 'file/1.txt',
+        metadata: {
+          Filename: '1.txt',
+          'Content-Type': 'text/plain',
+        },
+      },
+    ]);
+  });
+});
+
+describe('FileManager - Advanced Search Files', () => {
+  const privateKey = hexlify(Utils.keccak256Hash('pkinput'));
+  let fileManager: FileManager;
+
+  beforeEach(() => {
+    fileManager = new FileManager('http://localhost:1633', privateKey);
+    fileManager.mantaray = createMockMantarayNode() as any; // Inject mock Mantaray node
+  });
+
+  it('should return files matching the file name', () => {
+    const result = fileManager.searchFiles({ fileName: '1.txt' });
+    expect(result.map((f) => ({ path: f.path.split('\x00').join('') }))).toEqual([{ path: 'file/1.txt' }]);
+  });
+
+  it('should return files within a specific directory', () => {
+    const result = fileManager.searchFiles({ directory: 'file' });
+    expect(result.map((f) => ({ path: f.path.split('\x00').join('') }))).toEqual([
+      { path: 'file/1.txt' },
+      { path: 'file/2.txt' },
+    ]);
+  });
+
+  it('should return files matching metadata', () => {
+    const result = fileManager.searchFiles({
+      metadata: { 'Content-Type': 'text/plain' },
+    });
+    expect(result.map((f) => ({ path: f.path.split('\x00').join('') }))).toEqual([
+      { path: 'file/1.txt' },
+      { path: 'file/2.txt' },
+    ]);
+  });
+
+  it('should return files within a specific size range', () => {
+    const customForks = {
+      file: {
+        prefix: encodePathToBytes('file'),
+        node: {
+          forks: {
+            '1.txt': {
+              prefix: encodePathToBytes('1.txt'),
+              node: {
+                isValueType: () => true,
+                getEntry: new Uint8Array(Buffer.from('a'.repeat(64), 'hex')),
+                getMetadata: {
+                  Filename: '1.txt',
+                  'Content-Type': 'text/plain',
+                  'Content-Size': '500', // Size in bytes
+                },
+              },
+            },
+            '2.txt': {
+              prefix: encodePathToBytes('2.txt'),
+              node: {
+                isValueType: () => true,
+                getEntry: new Uint8Array(Buffer.from('b'.repeat(64), 'hex')),
+                getMetadata: {
+                  Filename: '2.txt',
+                  'Content-Type': 'text/plain',
+                  'Content-Size': '1500', // Size in bytes
+                },
+              },
+            },
+          },
+          isValueType: () => false,
+        },
+      },
+    } as any;
+
+    fileManager.mantaray = createMockMantarayNode(customForks, true) as any;
+
+    const result = fileManager.searchFiles({ minSize: 1000, maxSize: 2000 });
+    expect(result.map((f) => ({ path: f.path.split('\x00').join('') }))).toEqual([{ path: 'file/2.txt' }]);
+  });
+
+  it('should return files with a specific extension', () => {
+    // Custom forks for this specific test
+    const customForks = {
+      file: {
+        prefix: encodePathToBytes('file'),
+        node: {
+          forks: {
+            '1.txt': {
+              prefix: encodePathToBytes('1.txt'),
+              node: {
+                isValueType: () => true,
+                getEntry: new Uint8Array(Buffer.from('a'.repeat(64), 'hex')),
+                getMetadata: {
+                  Filename: '1.txt',
+                  'Content-Type': 'text/plain',
+                },
+              },
+            },
+            '2.txt': {
+              prefix: encodePathToBytes('2.txt'),
+              node: {
+                isValueType: () => true,
+                getEntry: new Uint8Array(Buffer.from('b'.repeat(64), 'hex')),
+                getMetadata: {
+                  Filename: '2.txt',
+                  'Content-Type': 'text/plain',
+                },
+              },
+            },
+          },
+          isValueType: () => false,
+        },
+      },
+    };
+
+    // Create mock MantarayNode with only custom forks
+    const mantaray = createMockMantarayNode(customForks, true); // Exclude default forks
+    fileManager.mantaray = mantaray;
+
+    const result = fileManager.searchFiles({ extension: '.txt' });
+    expect(result.map((f) => ({ path: f.path.split('\x00').join('') }))).toEqual([
+      { path: 'file/1.txt' },
+      { path: 'file/2.txt' },
+    ]);
+  });
+
+  it('should return files matching multiple criteria', () => {
+    // Custom forks for this specific test
+    const customForks = {
+      file: {
+        prefix: encodePathToBytes('file'),
+        node: {
+          forks: {
+            '2.txt': {
+              prefix: encodePathToBytes('2.txt'),
+              node: {
+                isValueType: () => true,
+                getEntry: new Uint8Array(Buffer.from('b'.repeat(64), 'hex')),
+                getMetadata: {
+                  Filename: '2.txt',
+                  'Content-Type': 'text/plain',
+                  'Content-Size': '1500',
+                },
+              },
+            },
+          },
+          isValueType: () => false,
+        },
+      },
+    };
+
+    // Create mock MantarayNode with only custom forks
+    const mantaray = createMockMantarayNode(customForks, true); // Exclude default forks
+    fileManager.mantaray = mantaray;
+
+    const result = fileManager.searchFiles({
+      fileName: '2.txt',
+      directory: 'file',
+      metadata: { 'Content-Type': 'text/plain' },
+      minSize: 0,
+      maxSize: 2000,
+      extension: '.txt',
+    });
+    expect(result.map((f) => ({ path: f.path.split('\x00').join('') }))).toEqual([{ path: 'file/2.txt' }]);
+  });
+
+  it('should return an empty array if no files match the criteria', () => {
+    const result = fileManager.searchFiles({
+      fileName: 'nonexistent.txt',
+    });
+    expect(result).toEqual([]);
+  });
+});
+
 describe('FileManager - Download File', () => {
   let mockBee: ReturnType<typeof createMockBee>;
   const privateKey = hexlify(Utils.keccak256Hash('pkinput'));

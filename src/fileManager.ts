@@ -489,7 +489,7 @@ export class FileManager {
 
     const allFiles = this.listFiles(this.mantaray, includeMetadata);
 
-    const filteredFiles = allFiles.filter((file) => path.posix.basename(file.path).includes(fileNameQuery));
+    const filteredFiles = allFiles.filter((file) => file.path.includes(fileNameQuery));
 
     return filteredFiles;
   }
@@ -541,7 +541,11 @@ export class FileManager {
     }
 
     if (extension) {
-      results = results.filter((file) => path.posix.extname(file.path) === extension);
+      const normalizedExtension = extension.startsWith('.') ? extension : `.${extension}`;
+      results = results.filter((file) => {
+        const cleanPath = file.path.split('\x00').join(''); // Clean up any null characters
+        return path.posix.extname(cleanPath) === normalizedExtension;
+      });
     }
 
     return results.map((file) => (includeMetadata ? file : { path: file.path }));
