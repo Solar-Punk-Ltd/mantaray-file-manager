@@ -289,15 +289,16 @@ export class FileManager {
     await this.importReferences(items, undefined, true);
   }
 
-  async downloadFile(mantaray: MantarayNode, filePath: string) {
+  async downloadFile(mantaray: MantarayNode, filePath: string, onlyMetadata = false) {
     mantaray = mantaray || this.mantaray;
     console.log(`Downloading file: ${filePath}`);
     const normalizedPath = path.normalize(filePath);
     const segments = normalizedPath.split(path.sep);
     let currentNode = mantaray;
 
+    // Traverse the Mantaray structure
     for (const segment of segments) {
-      const segmentBytes = encodePathToBytes(segment); // Use encodePathToBytes here
+      const segmentBytes = encodePathToBytes(segment); // Encode the segment to bytes
       const fork = Object.values(currentNode.forks || {}).find((f) => Buffer.compare(f.prefix, segmentBytes) === 0);
 
       if (!fork) throw new Error(`Path segment not found: ${segment}`);
@@ -310,10 +311,18 @@ export class FileManager {
 
     const fileReference = currentNode.getEntry;
     if (!fileReference) throw new Error(`File reference not found for path: ${filePath}`);
+
+    const metadata = currentNode.getMetadata || {};
+
+    if (onlyMetadata) {
+      // If only metadata is requested, skip downloading the file
+      console.log(`Returning metadata only for: ${filePath}`);
+      return { metadata };
+    }
+
     const hexReference = Utils.bytesToHex(fileReference);
     console.log(`Downloading file with reference: ${hexReference}`);
 
-    const metadata = currentNode.getMetadata || {};
     try {
       const fileData = await this.bee.downloadFile(hexReference);
       return {
