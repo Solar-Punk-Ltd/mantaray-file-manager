@@ -8,7 +8,7 @@ import { encodePathToBytes } from '../src/utils';
 
 import { createMockBee, createMockMantarayNode } from './mockHelpers';
 
-jest.mock('mantaray-js', () => {
+jest.mock('@solarpunkltd/mantaray-js', () => {
   const mockMantarayNode = jest.fn(() => createMockMantarayNode());
   return {
     MantarayNode: mockMantarayNode,
