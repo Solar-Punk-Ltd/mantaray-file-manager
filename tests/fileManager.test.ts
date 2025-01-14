@@ -532,6 +532,97 @@ describe('FileManager - Download File', () => {
   });
 });
 
+describe('FileManager - Download Metadata', () => {
+  let fileManager: FileManager;
+  let mantaray: MantarayNode;
+
+  beforeEach(() => {
+    const mockBee = createMockBee();
+    const mockPrivateKey = '0x' + '1'.repeat(64); // Valid mock private key
+    fileManager = new FileManager('http://localhost:1633', mockPrivateKey);
+    fileManager.bee = mockBee as any; // Inject mock Bee
+    mantaray = createMockMantarayNode({
+      file: {
+        prefix: Buffer.from('file'),
+        node: {
+          forks: {
+            'file1.txt': {
+              prefix: Buffer.from('file1.txt'),
+              node: {
+                isValueType: () => true,
+                getEntry: Buffer.from('a'.repeat(64), 'hex'),
+                getMetadata: {
+                  Filename: 'file1.txt',
+                  'Content-Type': 'text/plain',
+                },
+              },
+            },
+          },
+          isValueType: () => false,
+        },
+      },
+    }) as any;
+  });
+
+  it('should return metadata for a valid file path', async () => {
+    const result = await fileManager.downloadFile(mantaray, 'file/file1.txt', true);
+
+    expect(result).toEqual({
+      metadata: {
+        Filename: 'file1.txt',
+        'Content-Type': 'text/plain',
+      },
+    });
+  });
+
+  it('should handle missing metadata gracefully', async () => {
+    const mantarayWithNoMetadata = createMockMantarayNode({
+      file: {
+        prefix: Buffer.from('file'),
+        node: {
+          forks: {
+            'file2.txt': {
+              prefix: Buffer.from('file2.txt'),
+              node: {
+                isValueType: () => true,
+                getEntry: Buffer.from('b'.repeat(64), 'hex'),
+                getMetadata: {}, // No metadata
+              },
+            },
+          },
+          isValueType: () => false,
+        },
+      },
+    }) as any;
+
+    const result = await fileManager.downloadFile(mantarayWithNoMetadata, 'file/file2.txt', true);
+
+    expect(result).toEqual({
+      metadata: {}, // Empty metadata
+    });
+  });
+
+  it('should throw an error for an invalid file path', async () => {
+    await expect(fileManager.downloadFile(mantaray, 'file/nonexistent.txt', true)).rejects.toThrow(
+      'Path segment not found: nonexistent.txt',
+    );
+  });
+
+  it('should not download the file content when onlyMetadata is true', async () => {
+    const spyDownloadFile = jest.spyOn(fileManager.bee, 'downloadFile');
+
+    const result = await fileManager.downloadFile(mantaray, 'file/file1.txt', true);
+
+    expect(spyDownloadFile).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      metadata: {
+        Filename: 'file1.txt',
+        'Content-Type': 'text/plain',
+      },
+    });
+  });
+});
+
 describe('FileManager - Download Files', () => {
   let mockBee: ReturnType<typeof createMockBee>;
   const privateKey = hexlify(Utils.keccak256Hash('pkinput'));
