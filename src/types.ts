@@ -1,20 +1,23 @@
 import { BatchId, Reference } from '@ethersphere/bee-js';
 
-// TODO: maybe rename to FileInfo
-export interface MetadataFile {
-  reference: string | Reference;
+export interface FileInfo {
+  fileRef: string | Reference;
   batchId: string | BatchId;
   shared?: boolean;
-  name?: string;
+  fileName?: string;
   owner?: string;
   eGlRef?: string | Reference;
   historyRef?: string | Reference;
   timestamp?: number;
 }
 
+export interface FileInfoHistory {
+  fileInfoHistoryRef: string;
+}
+
 export interface OwnerFeedData {
-  history: string;
-  metadataListReference: string;
+  wrappedFeedListRef: string;
+  historyRef: string;
 }
 
 // export interface MetadataFile {

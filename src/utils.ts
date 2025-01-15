@@ -1,3 +1,4 @@
+import { BeeRequestOptions } from '@ethersphere/bee-js';
 import path from 'path';
 
 import { SharedMessage } from './types';
@@ -58,4 +59,22 @@ export function decodeBytesToPath(bytes: Uint8Array): string {
 
 export function encodePathToBytes(pathString: string): Uint8Array {
   return new TextEncoder().encode(pathString);
+}
+
+export function makeBeeRequestOptions(historyRef?: string, publisher?: string, timestamp?: number): BeeRequestOptions {
+  const options: BeeRequestOptions = {};
+  if (historyRef !== undefined) {
+    options.headers = { 'swarm-act-history-address': historyRef };
+  }
+  if (publisher !== undefined) {
+    options.headers = {
+      ...options.headers,
+      'swarm-act-publisher': publisher,
+    };
+  }
+  if (timestamp !== undefined) {
+    options.headers = { ...options.headers, 'swarm-act-timestamp': timestamp.toString() };
+  }
+
+  return options;
 }

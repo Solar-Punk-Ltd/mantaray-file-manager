@@ -3,7 +3,6 @@ import {
   Bee,
   BeeRequestOptions,
   Data,
-  ENCRYPTED_REFERENCE_HEX_LENGTH,
   FileUploadOptions,
   GranteesResult,
   PostageBatch,
@@ -12,32 +11,42 @@ import {
   Reference,
   REFERENCE_HEX_LENGTH,
   UploadRedundancyOptions,
+  UploadResultWithCid,
   Utils,
 } from '@ethersphere/bee-js';
-import { MantarayNode, MetadataMapping, Reference as MantarayRef } from '@solarpunkltd/mantaray-js';
+import { initManifestNode, MantarayNode, MetadataMapping, Reference as MantarayRef } from '@solarpunkltd/mantaray-js';
 import { Wallet } from 'ethers';
 import { readFileSync } from 'fs';
 import path from 'path';
 
 import {
   DEFAULT_FEED_TYPE,
-  METADATA_TOPIC,
+  FILEIINFO_NAME,
+  FILEINFO_HISTORY_NAME,
+  INVALID_STMAP,
   OWNER_FEED_STAMP_LABEL,
   REFERENCE_LIST_TOPIC,
+  ROOT_PATH,
   SHARED_INBOX_TOPIC,
 } from './constants';
-import { MetadataFile, OwnerFeedData, SharedMessage } from './types';
-import { assertSharedMessage, decodeBytesToPath, encodePathToBytes, getContentType } from './utils';
+import { FileInfo, FileInfoHistory, OwnerFeedData, SharedMessage } from './types';
+import {
+  assertSharedMessage,
+  decodeBytesToPath,
+  encodePathToBytes,
+  getContentType,
+  makeBeeRequestOptions,
+} from './utils';
 
 export class FileManager {
   // TODO: private vars
   // TODO: store shared refs and own files in the same array ?
   public bee: Bee;
   public mantaray: MantarayNode;
-  public importedFiles: MetadataFile[];
 
   private stampList: PostageBatch[];
-  private metadataFileList: MetadataFile[];
+  private ownerFileInfoFeedData: object;
+  private fileInfoList: FileInfo[];
   private nextOwnerFeedIndex: string;
   private wallet: Wallet;
   private privateKey: string;
@@ -59,15 +68,15 @@ export class FileManager {
     console.log('Initializing Bee client...');
     this.bee = new Bee(beeUrl);
     this.stampList = [];
-    this.metadataFileList = [];
+    this.fileInfoList = [];
+    this.ownerFileInfoFeedData = {};
     this.nextOwnerFeedIndex = '';
     this.privateKey = privateKey;
     this.wallet = new Wallet(privateKey);
     this.address = this.wallet.address;
     this.topic = this.bee.makeFeedTopic(REFERENCE_LIST_TOPIC);
 
-    this.mantaray = new MantarayNode();
-    this.importedFiles = [];
+    this.mantaray = initManifestNode();
     this.granteeLists = [];
     this.sharedWithMe = [];
     this.sharedSubscription = {} as PssSubscription;
@@ -100,9 +109,9 @@ export class FileManager {
 
     // if stamp is not found than the file cannot be downloaded? is this necessary ??
     for (const stamp of this.stampList) {
-      const mtdtIx = this.metadataFileList.findIndex((f) => stamp.batchID === f.batchId);
+      const mtdtIx = this.fileInfoList.findIndex((f) => stamp.batchID === f.batchId);
       if (mtdtIx === undefined) {
-        this.metadataFileList.splice(mtdtIx, 1);
+        this.fileInfoList.splice(mtdtIx, 1);
       }
     }
 
@@ -144,15 +153,15 @@ export class FileManager {
       const ownerFeedRawData = await this.bee.downloadData(latestFeedData.reference);
       const ownerFeedData = JSON.parse(JSON.stringify(ownerFeedRawData)) as OwnerFeedData;
       const options: BeeRequestOptions = {
-        headers: { 'swarm-act-history-address': ownerFeedData.history, 'swarm-act-publisher': this.address },
+        headers: { 'swarm-act-history-address': ownerFeedData.historyRef, 'swarm-act-publisher': this.address },
       } as const;
-      // TODO: act encrpyt the metadatalist refs??
-      const metadataList = JSON.parse(
-        (await this.bee.downloadData(ownerFeedData.metadataListReference, options)).text(),
-      ) as MetadataFile[];
-      for (const mtdt of metadataList) {
-        const metadata = JSON.parse((await this.bee.downloadData(mtdt.reference)).text()) as MetadataFile;
-        this.metadataFileList.push(metadata);
+      // TODO: act encrpyt the fileInfoList refs??
+      const fileInfoList = JSON.parse(
+        (await this.bee.downloadData(ownerFeedData.wrappedFeedListRef, options)).text(),
+      ) as FileInfo[];
+      for (const fi of fileInfoList) {
+        const metadata = JSON.parse((await this.bee.downloadData(fi.fileRef)).text()) as FileInfo;
+        this.fileInfoList.push(metadata);
       }
       console.log('Stamps fetched from feed.');
     } catch (error: any) {
@@ -285,27 +294,14 @@ export class FileManager {
   async importReferences(referenceList: Reference[], batchId?: string, isLocal = false): Promise<void> {
     const processPromises = referenceList.map(async (item: any) => {
       const reference: Reference = isLocal ? item.hash : item;
+      const fileInfo = { fileRef: reference, batchId: batchId || INVALID_STMAP } as FileInfo;
       try {
         console.log(`Processing reference: ${reference}`);
 
         // Download the file to extract its metadata
 
         // TODO: act headers
-        const options: BeeRequestOptions = {};
-        // if (file.reference.length === ENCRYPTED_REFERENCE_HEX_LENGTH) {
-        //   if (file.historyRef !== undefined) {
-        //     options.headers = { 'swarm-act-history-address': file.historyRef };
-        //   }
-        //   if (file.owner !== undefined) {
-        //     options.headers = {
-        //       ...options.headers,
-        //       'swarm-act-publisher': file.owner,
-        //     };
-        //   }
-        //   if (file.timestamp !== undefined) {
-        //     options.headers = { ...options.headers, 'swarm-act-timestamp': file.timestamp.toString() };
-        //   }
-        // }
+        const options = makeBeeRequestOptions(fileInfo.historyRef, fileInfo.owner, fileInfo.timestamp);
         // TODO: maybe use path to get the rootmetadata and store it locally
         const path = '/rootmetadata.json';
         const fileData = await this.bee.downloadFile(reference, path, options);
@@ -333,7 +329,13 @@ export class FileManager {
 
         // Track imported files
         // TODO: eglref, shared, timestamp -> mantaray root metadata
-        this.importedFiles.push({ reference: reference, name: fileName, batchId: batchId, shared: undefined });
+        // TODO: it shall be reverted to importedReferences
+        this.importedReferences.push({
+          fileRef: reference,
+          fileName: fileName,
+          batchId: batchId || INVALID_STMAP,
+          shared: undefined,
+        });
       } catch (error: any) {
         console.error(`[ERROR] Failed to process reference ${reference}: ${error.message}`);
       }
@@ -351,7 +353,12 @@ export class FileManager {
     await this.importReferences(items, undefined, true);
   }
 
-  async downloadFile(mantaray: MantarayNode, filePath: string, onlyMetadata = false): Promise<object> {
+  async downloadFile(
+    mantaray: MantarayNode,
+    filePath: string,
+    onlyMetadata = false,
+    options?: BeeRequestOptions,
+  ): Promise<object> {
     mantaray = mantaray || this.mantaray;
     console.log(`Downloading file: ${filePath}`);
     const normalizedPath = path.normalize(filePath);
@@ -386,7 +393,7 @@ export class FileManager {
     console.log(`Downloading file with reference: ${hexReference}`);
 
     try {
-      const fileData = await this.bee.downloadFile(hexReference);
+      const fileData = await this.bee.downloadFile(hexReference, 'encryptedfilepath', options);
       return {
         data: fileData.data ? Buffer.from(fileData.data).toString('utf-8').trim() : '',
         metadata,
@@ -469,70 +476,113 @@ export class FileManager {
       'Time-Uploaded': new Date().toISOString(),
       Filename: fileName,
       'Custom-Metadata': JSON.stringify(customMetadata),
-    };
+    } as MetadataMapping;
 
-    const uploadHeaders = {
-      contentType: contentType,
+    const defaultOptions = {
       act: true,
       redundancyLevel: redundancyLevel,
     } as FileUploadOptions & UploadRedundancyOptions;
 
+    let uploadFileRes: UploadResultWithCid;
     try {
-      const uploadResponse = await this.bee.uploadFile(batchId, fileData, fileName, uploadHeaders);
-      this.addToMantaray(mantaray, uploadResponse.reference, metadata);
-
-      const metadataFile = {
-        reference: uploadResponse.reference,
-        batchId: batchId,
-        name: fileName,
-        owner: this.address,
-        historyRef: uploadResponse.historyAddress,
-        timestamp: new Date().getTime(),
-        eGlRef: undefined,
-      } as MetadataFile;
-
-      // TODO: always update everything with the same redundancy level ??
-      try {
-        const uploadMetadataResponse = await this.bee.uploadFile(
-          batchId,
-          JSON.stringify(metadataFile),
-          'metadata.json',
-          {
-            contentType: 'application/json',
-            act: true,
-            redundancyLevel: redundancyLevel,
-          },
-        );
-        const topicHex = this.bee.makeFeedTopic(uploadMetadataResponse.reference);
-        const feedWriter = this.bee.makeFeedWriter(DEFAULT_FEED_TYPE, topicHex, this.privateKey);
-
-        const uploadResult = await this.bee.uploadData(batchId, uploadMetadataResponse.historyAddress);
-        const feedWriteResult = await feedWriter.upload(batchId, uploadResult.reference, {
-          index: undefined, // todo: keep track of the latest index ??
-          act: true,
-        });
-
-        console.log('File metadata feed updated: ', feedWriteResult.reference);
-        this.addToMantaray(mantaray, feedWriteResult.reference, metadata);
-      } catch (error: any) {
-        console.error(`Failed to update file metadata feed: ${error}`);
-      }
-
-      // TODO: wrapped mantaray
-      await this.updateWrappedMantaray();
-      this.metadataFileList.push(metadataFile);
-
-      console.log('Saving Mantaray node...');
-      const { eRef, hRef } = await this.saveMantaray(mantaray, batchId);
-
-      await this.updateMetadataFileList(hRef);
-
-      console.log(`File uploaded successfully: ${file}, Reference: ${eRef}`);
-      return eRef;
+      uploadFileRes = await this.bee.uploadFile(batchId, fileData, fileName, {
+        ...defaultOptions,
+        contentType: contentType,
+      });
+      // this.addToMantaray(mantaray, uploadFileRes.reference, metadata);
+      mantaray.addFork(encodePathToBytes(ROOT_PATH), Utils.hexToBytes(uploadFileRes.reference), metadata);
     } catch (error: any) {
-      console.error(`[ERROR] Failed to upload file ${file}: ${error.message}`);
+      console.error(`Failed to upload file ${file}: ${error.message}`);
       throw error;
     }
+
+    const fileInfo = {
+      fileRef: uploadFileRes.reference,
+      batchId: batchId,
+      fileName: fileName,
+      owner: this.address,
+      shared: false,
+      historyRef: uploadFileRes.historyAddress,
+      timestamp: new Date().getTime(),
+      eGlRef: undefined,
+    } as FileInfo;
+
+    let historyAddress: string;
+    try {
+      const uploadInfoRes = await this.bee.uploadFile(batchId, JSON.stringify(fileInfo), FILEIINFO_NAME, {
+        ...defaultOptions,
+        contentType: 'application/json',
+      });
+
+      historyAddress = uploadInfoRes.historyAddress;
+      console.log('Fileinfo updated: ', uploadInfoRes.reference);
+      // this.addToMantaray(mantaray, uploadInfoRes.reference, {});
+      mantaray.addFork(encodePathToBytes(ROOT_PATH), Utils.hexToBytes(uploadInfoRes.reference), {
+        'Content-Type': 'application/json',
+        Filename: FILEIINFO_NAME,
+      });
+      this.fileInfoList.push(fileInfo);
+    } catch (error: any) {
+      console.error(`Failed to save fileinfo: ${error}`);
+      throw error;
+    }
+
+    // TODO: do not even save separately fileInfoHistory just let it be the feed data
+    const fileInfoHistory = {
+      fileInfoHistoryRef: historyAddress,
+    } as FileInfoHistory;
+
+    try {
+      const uploadHistoryRes = await this.bee.uploadFile(
+        batchId,
+        JSON.stringify(fileInfoHistory),
+        FILEINFO_HISTORY_NAME,
+        {
+          redundancyLevel: redundancyLevel,
+          contentType: 'application/json',
+        },
+      );
+
+      console.log('Fileinfo history updated: ', uploadHistoryRes.reference);
+      // this.addToMantaray(mantaray, uploadHistoryRes.reference, {});
+      mantaray.addFork(encodePathToBytes(ROOT_PATH), Utils.hexToBytes(uploadHistoryRes.reference), {
+        'Content-Type': 'application/json',
+        Filename: FILEIINFO_NAME,
+      });
+    } catch (error: any) {
+      console.error(`Failed to save fileinfo history: ${error}`);
+      throw error;
+    }
+
+    let wrappedMantarayRef: string;
+    try {
+      // TODO: wrapped mantaray
+      wrappedMantarayRef = await this.saveMantaray(mantaray, batchId);
+    } catch (error: any) {
+      console.error(`Failed to save wrapped mantaray: ${error}`);
+      throw error;
+    }
+
+    try {
+      //TODO: test if feed ACT up/down actually works !!!
+      const topicHex = this.bee.makeFeedTopic(wrappedMantarayRef);
+      const feedWriter = this.bee.makeFeedWriter(DEFAULT_FEED_TYPE, topicHex, this.privateKey);
+      const wrappedFeedRes = await this.bee.uploadData(batchId, fileInfoHistory.fileInfoHistoryRef);
+      const feedWriteResult = await feedWriter.upload(batchId, wrappedFeedRes.reference, {
+        index: undefined, // todo: keep track of the latest index ??
+        act: true,
+      });
+      // TODO: properly handle feed data of wrapped feed addresses and histories
+      this.ownerFileInfoFeedData.feedWriteResult = feedWriteResult.historyAddress;
+
+      await this.saveWrappedMantarayList();
+    } catch (error: any) {
+      console.error(`Failed to save owner info feed: ${error}`);
+      throw error;
+    }
+
+    console.log(`File uploaded successfully: ${file}, Reference: ${wrappedMantarayRef}`);
+    return wrappedMantarayRef;
   }
 
   addToMantaray(mantaray: MantarayNode | undefined, reference: string, metadata: MetadataMapping = {}): void {
@@ -541,7 +591,7 @@ export class FileManager {
     const filePath = metadata.fullPath || metadata.Filename || 'file';
     const originalFileName = metadata.originalFileName || path.basename(filePath);
 
-    const bytesPath = Utils.hexToBytes(filePath);
+    const bytesPath = encodePathToBytes(filePath);
 
     const metadataWithOriginalName = {
       ...metadata,
@@ -552,24 +602,18 @@ export class FileManager {
   }
 
   // TODO: problem: mantary impl. is old and does not return the history address
-  async saveMantaray(mantaray: MantarayNode | undefined, stamp: string | BatchId): Promise<any> {
+  async saveMantaray(mantaray: MantarayNode | undefined, batchId: string | BatchId): Promise<string> {
     mantaray = mantaray || this.mantaray;
     console.log('Saving Mantaray manifest...');
 
     const saveFunction = async (data: Uint8Array): Promise<MantarayRef> => {
-      const fileName = 'manifest';
-      const contentType = 'application/json';
-      const uploadResponse = await this.bee.uploadFile(stamp, data, fileName, {
-        contentType,
-        act: true,
-      });
+      const uploadResponse = await this.bee.uploadData(batchId, data);
       return Utils.hexToBytes(uploadResponse.reference);
     };
 
     const manifestReference = Utils.bytesToHex(await mantaray.save(saveFunction));
-
-    console.log(`Mantaray manifest saved with reference: ${manifestReference}`);
-    return { eRef: manifestReference, hRef: saveResult.historyAddress };
+    console.log(`Mantaray manifest saved, reference: ${manifestReference}`);
+    return manifestReference;
   }
 
   searchFilesByName(fileNameQuery: string, includeMetadata = false): any {
@@ -599,7 +643,7 @@ export class FileManager {
       extension?: string;
     },
     includeMetadata = false,
-  ) {
+  ): any {
     let results = this.listFiles(this.mantaray, true);
 
     if (fileName) {
@@ -683,6 +727,12 @@ export class FileManager {
 
     return fileList;
   }
+
+  // list:
+  // metadata 1
+  // metadata 2 --> root mantary hash -> download -> getDirectoryStructure
+  //
+  //
 
   getDirectoryStructure(mantaray: MantarayNode | undefined, rootDirName: string): any {
     mantaray = mantaray || this.mantaray;
@@ -780,9 +830,16 @@ export class FileManager {
   }
 
   // Start feed handler methods
-  async updateWrappedMantaray(): Promise<string | undefined> {}
+  async updateWrappedMantaray(batchId: string, mantaray: MantarayNode): Promise<string | undefined> {
+    try {
+      return this.saveMantaray(mantaray, batchId);
+    } catch (error: any) {
+      console.error("Couldn't save wrapped mantaray:", error);
+      return undefined;
+    }
+  }
 
-  async updateMetadataFileList(): Promise<void> {
+  async saveWrappedMantarayList(): Promise<void> {
     const ownerFeedStamp = await this.getOwnerFeedStamp();
     if (!ownerFeedStamp) {
       console.error('Owner feed stamp is not found.');
@@ -792,12 +849,16 @@ export class FileManager {
     const ownerFeedTopicHex = this.bee.makeFeedTopic(REFERENCE_LIST_TOPIC);
     const ownerFeedWriter = this.bee.makeFeedWriter(DEFAULT_FEED_TYPE, ownerFeedTopicHex, this.privateKey);
     try {
-      const uploadResult = await this.bee.uploadData(ownerFeedStamp.batchID, JSON.stringify(this.metadataFileList), {
-        act: true,
-      });
+      const uploadResult = await this.bee.uploadData(
+        ownerFeedStamp.batchID,
+        JSON.stringify(this.ownerFileInfoFeedData),
+        {
+          act: true,
+        },
+      );
       const ownerFeedData = {
-        history: uploadResult.historyAddress,
-        metadataListReference: uploadResult.reference,
+        wrappedFeedListRef: uploadResult.reference,
+        historyRef: uploadResult.historyAddress,
       } as OwnerFeedData;
       const ownerFeedRawDataUploadResult = await this.bee.uploadData(
         ownerFeedStamp.batchID,
@@ -841,7 +902,7 @@ export class FileManager {
   // TODO: do not store encrypted grantee ref in the wrapedd mantaray just in the owner mtdt feed
   // fetches the list of grantees who can access the file reference
   async getGranteesOfFile(fileRef: string | Reference): Promise<string[] | undefined> {
-    const file = this.metadataFileList.find((f) => f.reference === fileRef);
+    const file = this.fileInfoList.find((f) => f.fileRef === fileRef);
     if (file === undefined || file.eGlRef === undefined) {
       console.error('File or grantee ref not found for reference: ', fileRef);
       return undefined;
@@ -857,7 +918,7 @@ export class FileManager {
   // updates the list of grantees who can access the file reference under the history reference
   async handleGrantees(
     batchId: string | BatchId,
-    file: MetadataFile,
+    file: FileInfo,
     grantees: {
       add?: string[];
       revoke?: string[];
@@ -889,12 +950,12 @@ export class FileManager {
       } else {
         this.granteeLists[currentGranteesIx] = grantResult.ref;
         // TODO: maybe don't need to check if upload + patch happens at the same time -> add to import ?
-        const fIx = this.importedFiles.findIndex((f) => f.reference === file.reference);
+        const fIx = this.fileInfoList.findIndex((f) => f.fileRef === file.fileRef);
         if (fIx === -1) {
-          console.log('Provided file reference not found in imported files: ', file.reference);
+          console.log('Provided file reference not found in imported files: ', file.fileRef);
           return undefined;
         } else {
-          this.importedFiles[fIx].eGlRef = grantResult.ref;
+          this.fileInfoList[fIx].eGlRef = grantResult.ref;
         }
       }
 
@@ -943,7 +1004,7 @@ export class FileManager {
       const historyRefs = new Array<string>(references.length);
       for (let i = 0; i < references.length; i++) {
         const ref = references[i];
-        const file = this.importedFiles.find((f) => f.reference === ref);
+        const file = this.fileInfoList.find((f) => f.fileRef === ref);
         if (file === undefined) {
           console.log('File not found for reference: ', ref);
           continue;
@@ -952,17 +1013,17 @@ export class FileManager {
           console.log('History not found for reference: ', ref);
           continue;
         }
-        // TODO: how to update file metadata with new eglref ? -> filemetadata = /feed/decryptedref/metadata
+        // TODO: how to update fileinfo with new eglref, href and not separate params
         const grantResult = await this.handleGrantees(
           batchId,
-          { reference: ref },
+          { fileRef: ref, batchId: batchId },
           { add: recipients },
           file.historyRef,
           file.eGlRef,
         );
 
         if (grantResult !== undefined) {
-          const feedMetadatRef = await this.updateFileMetadata({
+          const feedMetadatRef = await this.updateWrappedMantaray({
             ...file,
             eGlRef: grantResult.ref,
             historyRef: grantResult.historyref,
@@ -1014,34 +1075,20 @@ export class FileManager {
     }
   }
   // TODO: maybe store only the encrypted refs for security and use
-  async downloadSharedItem(file: MetadataFile, path?: string): Promise<Data | undefined> {
-    if (!this.sharedWithMe.find((msg) => msg.references.includes(file.reference))) {
-      console.log('Cannot find reference in shared messages: ', file.reference);
+  async downloadSharedItem(file: FileInfo, path?: string): Promise<Data | undefined> {
+    if (!this.sharedWithMe.find((msg) => msg.references.includes(file.fileRef))) {
+      console.log('Cannot find file reference in shared messages: ', file.fileRef);
       return undefined;
     }
 
-    const options: BeeRequestOptions = {};
-    if (file.reference.length === ENCRYPTED_REFERENCE_HEX_LENGTH) {
-      if (file.historyRef !== undefined) {
-        options.headers = { 'swarm-act-history-address': file.historyRef };
-      }
-      if (file.owner !== undefined) {
-        options.headers = {
-          ...options.headers,
-          'swarm-act-publisher': file.owner,
-        };
-      }
-      if (file.timestamp !== undefined) {
-        options.headers = { ...options.headers, 'swarm-act-timestamp': file.timestamp.toString() };
-      }
-    }
+    const options = makeBeeRequestOptions(file.historyRef, file.owner, file.timestamp);
 
     try {
       // TODO: publisher and history headers
-      const data = await this.bee.downloadFile(file.reference, path, options);
+      const data = await this.bee.downloadFile(file.fileRef, path, options);
       return data.data;
     } catch (error: any) {
-      console.error(`Failed to download shared file ${file.reference}\n: ${error}`);
+      console.error(`Failed to download shared file ${file.fileRef}\n: ${error}`);
       return undefined;
     }
   }
