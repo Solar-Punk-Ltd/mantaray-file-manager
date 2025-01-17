@@ -479,7 +479,7 @@ export class FileManager {
 
     const manifestReference = await mantaray.save(saveFunction);
 
-    const hexReference = Buffer.from(manifestReference).toString('hex');
+    const hexReference = manifestReference;
     console.log(`Mantaray manifest saved with reference: ${hexReference}`);
     return hexReference;
   }
