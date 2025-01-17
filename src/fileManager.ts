@@ -321,11 +321,10 @@ export class FileManager {
       return { metadata };
     }
 
-    const hexReference = Utils.bytesToHex(fileReference);
-    console.log(`Downloading file with reference: ${hexReference}`);
+    console.log(`Downloading file with reference: ${fileReference}`);
 
     try {
-      const fileData = await this.bee.downloadFile(hexReference);
+      const fileData = await this.bee.downloadFile(fileReference);
       return {
         data: fileData.data ? Buffer.from(fileData.data).toString('utf-8').trim() : '',
         metadata,
@@ -464,7 +463,7 @@ export class FileManager {
       Filename: originalFileName, // Use the original filename here
     };
 
-    mantaray.addFork(bytesPath, Utils.hexToBytes(reference), metadataWithOriginalName);
+    mantaray.addFork(bytesPath, reference as Reference, metadataWithOriginalName);
   }
 
   async saveMantaray(mantaray: MantarayNode | undefined, stamp: string | BatchId) {
@@ -475,7 +474,7 @@ export class FileManager {
       const fileName = 'manifest';
       const contentType = 'application/json';
       const uploadResponse = await this.bee.uploadFile(stamp, data, fileName, { contentType });
-      return Utils.hexToBytes(uploadResponse.reference);
+      return uploadResponse.reference;
     };
 
     const manifestReference = await mantaray.save(saveFunction);
