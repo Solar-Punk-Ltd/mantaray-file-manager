@@ -1,5 +1,5 @@
 import { BatchId, Bee, PostageBatch, Reference, Utils } from '@ethersphere/bee-js';
-import { MantarayNode, MetadataMapping, Reference as MantarayRef } from '@solarpunkltd/mantaray-js';
+import { MantarayNode, MetadataMapping } from '@solarpunkltd/mantaray-js';
 import { Wallet } from 'ethers';
 import { readFileSync } from 'fs';
 import path from 'path';
@@ -470,7 +470,7 @@ export class FileManager {
     mantaray = mantaray || this.mantaray;
     console.log('Saving Mantaray manifest...');
 
-    const saveFunction = async (data: Uint8Array): Promise<MantarayRef> => {
+    const saveFunction = async (data: Uint8Array): Promise<Reference> => {
       const fileName = 'manifest';
       const contentType = 'application/json';
       const uploadResponse = await this.bee.uploadFile(stamp, data, fileName, { contentType });
