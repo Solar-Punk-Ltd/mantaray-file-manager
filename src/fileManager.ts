@@ -99,10 +99,11 @@ export class FileManager {
     // Save the Mantaray structure and get the manifest reference (Uint8Array)
     const manifestReference = await this.mantaray.save(async (data) => {
       const uploadResponse = await this.bee.uploadData(stamp, data);
-      return Utils.hexToBytes(uploadResponse.reference) as Utils.Bytes<64>; // Ensure 64-byte reference
+      return uploadResponse.reference; // Ensure 64-byte reference
     });
 
-    const hexManifestReference = Utils.bytesToHex(manifestReference, 128); // Ensure hex string length is 128
+    if (manifestReference.length === 64) manifestReference.padEnd(128, '0');    // Ensure hex string length is 128
+    const hexManifestReference = manifestReference;
 
     // Create a feed writer and upload the manifest reference
     const writer = this.bee.makeFeedWriter('sequence', this.topic, this.wallet.privateKey);
