@@ -15,8 +15,8 @@ export interface FileInfoHistory {
   fileInfoHistoryRef: string;
 }
 
-export interface OwnerFeedData {
-  wrappedFeedListRef: string;
+export interface FileInfoFeedRef {
+  fileInfoFeedRef: string;
   historyRef: string;
 }
 
@@ -26,7 +26,7 @@ export interface OwnerFeedData {
 // }
 
 // TODO: unify own files with shared and add stamp data potentially
-export interface SharedMessage {
+export interface ShareItem {
   owner: string;
   references: string[];
   timestamp?: number;

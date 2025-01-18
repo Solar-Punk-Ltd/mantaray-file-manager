@@ -1,7 +1,7 @@
 import { BeeRequestOptions } from '@ethersphere/bee-js';
 import path from 'path';
 
-import { SharedMessage } from './types';
+import { ShareItem } from './types';
 
 export function getContentType(filePath: string): string {
   const ext = path.extname(filePath).toLowerCase();
@@ -24,12 +24,12 @@ export function isStrictlyObject(value: unknown): value is Record<string, unknow
   return isObject(value) && !Array.isArray(value);
 }
 
-export function assertSharedMessage(value: unknown): asserts value is SharedMessage {
+export function assertSharedMessage(value: unknown): asserts value is ShareItem {
   if (!isStrictlyObject(value)) {
     throw new TypeError('SharedMessage has to be object!');
   }
 
-  const message = value as unknown as SharedMessage;
+  const message = value as unknown as ShareItem;
 
   if (typeof message.owner !== 'string') {
     throw new TypeError('owner property of SharedMessage has to be string!');
