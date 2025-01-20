@@ -39,7 +39,7 @@ describe('FileManager - Initialize', () => {
   beforeEach(() => {
     mockBee = createMockBee();
     fileManager = new FileManager('http://localhost:1633', privateKey);
-    fileManager.importedFiles = [];
+    fileManager.importedFileInfoList = [];
     jest.clearAllMocks();
   });
 
