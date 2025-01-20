@@ -23,7 +23,8 @@
   "license": "MIT",
   "dependencies": {
     "@ethersphere/bee-js": "^8.3.1",
-    "@solarpunkltd/mantaray-js": "^1.0.5"
+    "@solarpunkltd/mantaray-js": "^1.0.5",
+    "cafe-utility": "^21.5.0"
   },
   "devDependencies": {
     "@babel/preset-env": "^7.26.0",
