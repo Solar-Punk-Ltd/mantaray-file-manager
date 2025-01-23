@@ -1,27 +1,18 @@
 import { BatchId, Reference, ReferenceResponse } from '@ethersphere/bee-js';
 
 export interface FileInfo {
-  fileRef: string | Reference;
   batchId: string | BatchId;
-  shared?: boolean;
-  fileName?: string;
-  owner?: string;
-  eGlRef?: string | Reference;
+  fileRef: string | Reference;
   historyRef?: string | Reference;
+  owner?: string;
+  fileName?: string;
   timestamp?: number;
+  shared?: boolean;
+  customMetadata?: Record<string, string>;
 }
 
-export interface FileInfoHistory {
-  fileInfoHistoryRef: string;
-}
-
-export interface WrappedMantarayFeed {
-  mantarayFeedTopic: string;
-  historyRef: string;
-}
-
-export interface OwnerFeedData {
-  mantarayListFeedRef: string;
+export interface ReferenceWithHistory {
+  reference: string;
   historyRef: string;
 }
 
@@ -32,6 +23,7 @@ export interface ShareItem {
   timestamp?: number;
   message?: string;
 }
+
 export interface Bytes<Length extends number> extends Uint8Array {
   readonly length: Length;
 }
@@ -40,7 +32,6 @@ export interface Epoch {
   time: number;
   level: number;
 }
-
 export type Index = number | Epoch | IndexBytes | string;
 interface FeedUpdateHeaders {
   feedIndex: Index;

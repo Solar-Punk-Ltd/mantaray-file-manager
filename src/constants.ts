@@ -2,7 +2,6 @@ import { FeedType } from './types';
 
 export const DEFAULT_FEED_TYPE: FeedType = 'sequence';
 export const REFERENCE_LIST_TOPIC = 'reference-list';
-export const FILEINFO_TOPIC = 'fileinfo';
 export const SHARED_INBOX_TOPIC = 'shared-inbox';
 export const OWNER_FEED_STAMP_LABEL = 'owner-stamp';
 export const INVALID_STMAP = '0'.repeat(64);

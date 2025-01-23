@@ -3,16 +3,14 @@ import {
   Bee,
   BeeRequestOptions,
   Data,
-  FileUploadOptions,
   GranteesResult,
   PostageBatch,
   PssSubscription,
   RedundancyLevel,
   Reference,
   REFERENCE_HEX_LENGTH,
+  Signer,
   TOPIC_HEX_LENGTH,
-  UploadRedundancyOptions,
-  UploadResultWithCid,
   Utils,
 } from '@ethersphere/bee-js';
 import { initManifestNode, MantarayNode, MetadataMapping, Reference as MantarayRef } from '@solarpunkltd/mantaray-js';
@@ -27,12 +25,11 @@ import {
   FILEIINFO_PATH,
   FILEINFO_HISTORY_NAME,
   FILEINFO_HISTORY_PATH,
-  INVALID_STMAP,
   OWNER_FEED_STAMP_LABEL,
   REFERENCE_LIST_TOPIC,
   SHARED_INBOX_TOPIC,
 } from './constants';
-import { FileInfo, FileInfoHistory, OwnerFeedData, ShareItem, WrappedMantarayFeed } from './types';
+import { FileInfo, ReferenceWithHistory, ShareItem } from './types';
 import {
   assertSharedMessage,
   decodeBytesToPath,
@@ -45,22 +42,20 @@ import {
 
 export class FileManager {
   // TODO: private vars
-  // TODO: store shared refs and own files in the same array ?
   public bee: Bee;
   // TODO: is this.mantaray needed ? always a new mantaray instance is created when wokring on an item
   public mantaray: MantarayNode;
 
+  private wallet: Wallet;
+  private signer: Signer;
   private importedReferences: string[];
   private stampList: PostageBatch[];
-  private mantarayFeedList: WrappedMantarayFeed[];
+  private mantarayFeedList: ReferenceWithHistory[];
   private fileInfoList: FileInfo[];
   private nextOwnerFeedIndex: number;
-  private wallet: Wallet;
-  private privateKey: string;
   private granteeLists: string[];
   private sharedWithMe: ShareItem[];
   private sharedSubscription: PssSubscription;
-  private address: string;
   private topic: string;
 
   constructor(beeUrl: string, privateKey: string) {
@@ -73,29 +68,29 @@ export class FileManager {
 
     console.log('Initializing Bee client...');
     this.bee = new Bee(beeUrl);
+    this.sharedSubscription = this.subscribeToSharedInbox();
+    this.wallet = new Wallet(privateKey);
+    this.signer = {
+      address: Utils.hexToBytes(this.wallet.address.slice(2)),
+      sign: async (data: Data): Promise<string> => {
+        return await this.wallet.signMessage(data);
+      },
+    };
     this.mantaray = initManifestNode();
-    this.importedReferences = [];
     this.stampList = [];
+    this.importedReferences = [];
     this.fileInfoList = [];
     this.mantarayFeedList = [];
     this.nextOwnerFeedIndex = -1;
-    this.privateKey = privateKey;
-    this.wallet = new Wallet(privateKey);
-    this.address = this.wallet.address;
     this.topic = '';
     this.granteeLists = [];
     this.sharedWithMe = [];
-    this.sharedSubscription = {} as PssSubscription;
   }
 
   // Start init methods
   // TODO: use allSettled for file fetching and only save the ones that are successful
   async initialize(items: any | undefined): Promise<void> {
-    try {
-      this.sharedSubscription = this.subscribeToSharedInbox();
-    } catch (error: any) {
-      console.log('Error during shared inbox subscription: ', error);
-    }
+    this.initOwnerTopic();
 
     try {
       console.log('Importing stamps...');
@@ -136,35 +131,34 @@ export class FileManager {
     }
   }
 
-  // TODO: save owner feed topic on a separate feed protected by ACT lol
   async initOwnerTopic(): Promise<void> {
     try {
       const topicHex = this.bee.makeFeedTopic(REFERENCE_LIST_TOPIC);
-      const fw = this.bee.makeFeedWriter(DEFAULT_FEED_TYPE, topicHex, this.address);
-      const feedData = await fw.download();
-      if (feedData.feedIndexNext === undefined) {
-        const ownerStamp = await this.getOwnerFeedStamp();
-        if (ownerStamp === undefined) {
+      const fw = this.bee.makeFeedWriter(DEFAULT_FEED_TYPE, topicHex, this.wallet.address);
+      const topicData = await fw.download({ index: numberToFeedIndex(0) });
+      if (makeNumericIndex(topicData.feedIndexNext) === 0) {
+        const ownerFeedStamp = await this.getOwnerFeedStamp();
+        if (ownerFeedStamp === undefined) {
           console.log('Owner stamp not found');
           return;
         }
-        // TODO: handle firsrt init -> udpate feed with random data
         this.topic = Utils.bytesToHex(randomBytes(TOPIC_HEX_LENGTH), TOPIC_HEX_LENGTH);
-        const dataRes = await this.bee.uploadData(ownerStamp.batchID, this.topic, { act: true });
-        await fw.upload(ownerStamp.batchID, dataRes.reference, { index: numberToFeedIndex(0) });
+        const topicDataRes = await this.bee.uploadData(ownerFeedStamp.batchID, this.topic, { act: true });
+        await fw.upload(ownerFeedStamp.batchID, topicDataRes.reference, { index: numberToFeedIndex(0) });
+        await fw.upload(ownerFeedStamp.batchID, topicDataRes.historyAddress as Reference, {
+          index: numberToFeedIndex(1),
+        });
       } else {
-        const feedTopic = await this.bee.downloadData(feedData.reference);
-        const feedTopicData = JSON.parse(JSON.stringify(feedTopic)) as OwnerFeedData;
-
-        const options = makeBeeRequestOptions(feedTopicData.historyRef, this.address);
-        this.topic = (await this.bee.downloadData(feedTopicData.mantarayListFeedRef, options)).text();
+        const topicHistory = await fw.download({ index: numberToFeedIndex(1) });
+        const options = makeBeeRequestOptions(topicHistory.reference, this.wallet.address);
+        this.topic = Utils.bytesToHex(await this.bee.downloadData(topicData.reference, options));
       }
     } catch (error: any) {
-      console.log('error reading owner feed topic: ', error);
+      console.log('error reading owner topic efeed: ', error);
+      throw error;
     }
   }
 
-  // TODO: import other stamps in order to topup: owner(s) ?
   async initStamps(): Promise<void> {
     try {
       this.stampList = await this.getUsableStamps();
@@ -178,26 +172,24 @@ export class FileManager {
   // TODO: shared file feed similarly
   // TODO: heavy refactoring needed
   async initFileInfoList(): Promise<void> {
-    const topicHex = this.bee.makeFeedTopic(REFERENCE_LIST_TOPIC);
-    const feedReader = this.bee.makeFeedReader(DEFAULT_FEED_TYPE, topicHex, this.address);
+    const ownerFR = this.bee.makeFeedReader(DEFAULT_FEED_TYPE, this.topic, this.wallet.address);
     try {
-      const latestFeedData = await feedReader.download();
+      const latestFeedData = await ownerFR.download();
       this.nextOwnerFeedIndex = makeNumericIndex(latestFeedData.feedIndexNext);
-
       const ownerFeedRawData = await this.bee.downloadData(latestFeedData.reference);
-      const ownerFeedData = JSON.parse(JSON.stringify(ownerFeedRawData)) as OwnerFeedData;
-      const options = makeBeeRequestOptions(ownerFeedData.historyRef, this.address);
-      const mantarayFeedList = (await this.bee.downloadData(ownerFeedData.mantarayListFeedRef, options)).text();
-      this.mantarayFeedList = JSON.parse(mantarayFeedList) as WrappedMantarayFeed[];
+      const ownerFeedData = JSON.parse(JSON.stringify(ownerFeedRawData)) as ReferenceWithHistory;
+      const options = makeBeeRequestOptions(ownerFeedData.historyRef, this.wallet.address);
+      const mantarayFeedList = (await this.bee.downloadData(ownerFeedData.reference, options)).text();
+      this.mantarayFeedList = JSON.parse(mantarayFeedList) as ReferenceWithHistory[];
       for (const mantaryFeedItem of this.mantarayFeedList) {
-        const wrappedMantarayFr = this.bee.makeFeedReader(
+        const wrappedMantarayFR = this.bee.makeFeedReader(
           DEFAULT_FEED_TYPE,
-          mantaryFeedItem.mantarayFeedTopic,
-          this.address,
+          mantaryFeedItem.reference,
+          this.wallet.address,
         );
         // TODO: donwload encrypted file info data
-        const wrappedMantarayData = await wrappedMantarayFr.download();
-        let options = makeBeeRequestOptions(mantaryFeedItem.historyRef, this.address);
+        const wrappedMantarayData = await wrappedMantarayFR.download();
+        let options = makeBeeRequestOptions(mantaryFeedItem.historyRef, this.wallet.address);
         const wrappedMantarayRef = (
           await this.bee.downloadData(wrappedMantarayData.reference, options)
         ).hex() as Reference;
@@ -219,7 +211,7 @@ export class FileManager {
           continue;
         }
         const historyRef = Utils.bytesToHex(historyRefBytes);
-        options = makeBeeRequestOptions(historyRef, this.address);
+        options = makeBeeRequestOptions(historyRef, this.wallet.address);
         const fileInfo = JSON.parse(JSON.stringify(await this.bee.downloadData(fileInfoRef, options))) as FileInfo;
         this.fileInfoList.push(fileInfo);
       }
@@ -350,7 +342,6 @@ export class FileManager {
   }
   // End stamp methods
 
-  // TODO: only download metadata files for listing -> only download the whole file on demand
   async importReferences(referenceList: Reference[], isLocal = false): Promise<void> {
     const processPromises = referenceList.map(async (item: any) => {
       const reference: Reference = isLocal ? item.hash : item;
@@ -401,7 +392,7 @@ export class FileManager {
   }
 
   async importLocalReferences(items: any): Promise<void> {
-    await this.importReferences(items, undefined, true);
+    await this.importReferences(items, undefined);
   }
 
   async downloadFile(
@@ -506,138 +497,141 @@ export class FileManager {
     return validResults; // Return successful download results
   }
 
-  // TODO: always upload with ACT, only adding the publisher as grantee first (by defualt), then when shared, add the grantees
-  // TODO: store filerefs with the historyrefs
-  async uploadFile(
-    file: string,
-    mantaray: MantarayNode | undefined,
+  async upload(
     batchId: string | BatchId,
-    customMetadata = {},
+    mantaray: MantarayNode | undefined,
+    file: string,
+    customMetadata: Record<string, string> = {},
+    refAsTopicHex: string | undefined = undefined,
     redundancyLevel = RedundancyLevel.MEDIUM,
-    refAsTopicHex?: string,
-  ): Promise<string> {
+  ): Promise<void> {
     mantaray = mantaray || this.mantaray;
-    console.log(`Uploading file: ${file}`);
-    const fileData = readFileSync(file);
-    const fileName = path.basename(file);
-    const contentType = getContentType(file);
 
-    const metadata = {
-      'Content-Type': contentType,
-      'Content-Size': fileData.length.toString(),
-      'Time-Uploaded': new Date().toISOString(),
-      Filename: fileName,
-      'Custom-Metadata': JSON.stringify(customMetadata),
-    } as MetadataMapping;
-
-    const defaultOptions = {
-      act: true,
-      redundancyLevel: redundancyLevel,
-    } as FileUploadOptions & UploadRedundancyOptions;
-
-    let uploadFileRes: UploadResultWithCid;
-    try {
-      uploadFileRes = await this.bee.uploadFile(batchId, fileData, fileName, {
-        ...defaultOptions,
-        contentType: contentType,
-      });
-      // this.addToMantaray(mantaray, uploadFileRes.reference, metadata);
-      // mantaray.addFork(encodePathToBytes(ROOT_PATH), Utils.hexToBytes(uploadFileRes.reference), metadata);
-    } catch (error: any) {
-      console.error(`Failed to upload file ${file}: ${error.message}`);
-      throw error;
-    }
+    const uploadFileRes = await this.uploadFile(batchId, file, redundancyLevel);
 
     const fileInfo = {
       fileRef: uploadFileRes.reference,
       batchId: batchId,
-      fileName: fileName,
-      owner: this.address,
+      fileName: path.basename(file),
+      owner: this.wallet.address,
       shared: false,
-      historyRef: uploadFileRes.historyAddress,
+      historyRef: uploadFileRes.historyRef,
       timestamp: new Date().getTime(),
-      eGlRef: undefined,
+      customMetadata: customMetadata,
     } as FileInfo;
 
-    let fileInfoHistoryRef: string;
-    try {
-      const uploadInfoRes = await this.bee.uploadFile(batchId, JSON.stringify(fileInfo), FILEIINFO_NAME, {
-        ...defaultOptions,
-        contentType: 'application/json',
-      });
+    const fileInfoRes = await this.uploadFileInfo(batchId, fileInfo, redundancyLevel);
+    mantaray.addFork(encodePathToBytes(FILEIINFO_PATH), Utils.hexToBytes(fileInfoRes.reference), {
+      'Content-Type': 'application/json',
+      Filename: FILEIINFO_NAME,
+    });
 
-      fileInfoHistoryRef = uploadInfoRes.historyAddress;
-      console.log('Fileinfo updated: ', uploadInfoRes.reference);
-      // this.addToMantaray(mantaray, uploadInfoRes.reference, {});
-      mantaray.addFork(encodePathToBytes(FILEIINFO_PATH), Utils.hexToBytes(uploadInfoRes.reference), {
-        'Content-Type': 'application/json',
-        Filename: FILEIINFO_NAME,
-      });
-      this.fileInfoList.push(fileInfo);
-    } catch (error: any) {
-      console.error(`Failed to save fileinfo: ${error}`);
-      throw error;
-    }
-
-    // TODO: do not even save separately fileInfoHistory just let it be the feed data
-    const fileInfoHistory = {
-      fileInfoHistoryRef: fileInfoHistoryRef,
-    } as FileInfoHistory;
-
-    try {
-      const uploadHistoryRes = await this.bee.uploadFile(
-        batchId,
-        JSON.stringify(fileInfoHistory),
-        FILEINFO_HISTORY_NAME,
-        {
-          redundancyLevel: redundancyLevel,
-          contentType: 'application/json',
-        },
-      );
-
-      console.log('Fileinfo history updated: ', uploadHistoryRes.reference);
-      // this.addToMantaray(mantaray, uploadHistoryRes.reference, {});
-      // TODO: this can be simple data
-      mantaray.addFork(encodePathToBytes(FILEINFO_HISTORY_PATH), Utils.hexToBytes(uploadHistoryRes.reference), {
-        'Content-Type': 'application/json',
-        Filename: FILEINFO_HISTORY_NAME,
-      });
-    } catch (error: any) {
-      console.error(`Failed to save fileinfo history: ${error}`);
-      throw error;
-    }
+    const uploadHistoryRef = await this.uploadFileInfoHistory(batchId, fileInfoRes.historyRef);
+    mantaray.addFork(encodePathToBytes(FILEINFO_HISTORY_PATH), Utils.hexToBytes(uploadHistoryRef), {
+      'Content-Type': 'application/json',
+      Filename: FILEINFO_HISTORY_NAME,
+    });
 
     let wrappedMantarayRef: string;
     try {
-      wrappedMantarayRef = await this.saveMantaray(mantaray, batchId);
+      wrappedMantarayRef = await this.saveMantaray(batchId, mantaray);
     } catch (error: any) {
       console.error(`Failed to save wrapped mantaray: ${error}`);
       throw error;
     }
 
+    await this.updateWrappedMantarayFeed(batchId, wrappedMantarayRef, refAsTopicHex);
+  }
+
+  private async uploadFile(
+    batchId: string | BatchId,
+    file: string,
+    redundancyLevel = RedundancyLevel.MEDIUM,
+  ): Promise<ReferenceWithHistory> {
+    console.log(`Uploading file: ${file}`);
+    const fileData = readFileSync(file);
+    const fileName = path.basename(file);
+    const contentType = getContentType(file);
+
+    try {
+      const uploadFileRes = await this.bee.uploadFile(batchId, fileData, fileName, {
+        act: true,
+        redundancyLevel: redundancyLevel,
+        contentType: contentType,
+      });
+
+      console.log(`File uploaded successfully: ${file}, Reference: ${uploadFileRes.reference}`);
+      return { reference: uploadFileRes.reference, historyRef: uploadFileRes.historyAddress };
+    } catch (error: any) {
+      console.error(`Failed to upload file ${file}: ${error.message}`);
+      throw error;
+    }
+  }
+
+  private async uploadFileInfo(
+    batchId: string | BatchId,
+    fileInfo: FileInfo,
+    redundancyLevel: RedundancyLevel = RedundancyLevel.MEDIUM,
+  ): Promise<ReferenceWithHistory> {
+    try {
+      const uploadInfoRes = await this.bee.uploadData(batchId, JSON.stringify(fileInfo), {
+        act: true,
+        redundancyLevel: redundancyLevel,
+      });
+      console.log('Fileinfo updated: ', uploadInfoRes.reference);
+
+      this.fileInfoList.push(fileInfo);
+
+      return { reference: uploadInfoRes.reference, historyRef: uploadInfoRes.historyAddress };
+    } catch (error: any) {
+      console.error(`Failed to save fileinfo: ${error}`);
+      throw error;
+    }
+  }
+
+  private async uploadFileInfoHistory(
+    batchId: string | BatchId,
+    hisoryRef: string,
+    redundancyLevel: RedundancyLevel = RedundancyLevel.MEDIUM,
+  ): Promise<string> {
+    try {
+      const uploadHistoryRes = await this.bee.uploadData(batchId, hisoryRef, {
+        redundancyLevel: redundancyLevel,
+      });
+
+      console.log('Fileinfo history updated: ', uploadHistoryRes.reference);
+
+      return uploadHistoryRes.reference;
+    } catch (error: any) {
+      console.error(`Failed to save fileinfo history: ${error}`);
+      throw error;
+    }
+  }
+
+  private async updateWrappedMantarayFeed(
+    batchId: string | BatchId,
+    wrappedMantarayRef: string,
+    refAsTopicHex: string | undefined,
+  ): Promise<void> {
     try {
       // TODO: test if feed ACT up/down actually works !!!
-      // TODO: uploadfile should accept a topic if a new version is uploaded
       const topicHex = refAsTopicHex || this.bee.makeFeedTopic(wrappedMantarayRef);
-      const wrappedMantarayFw = this.bee.makeFeedWriter(DEFAULT_FEED_TYPE, topicHex, this.privateKey);
+      const wrappedMantarayFw = this.bee.makeFeedWriter(DEFAULT_FEED_TYPE, topicHex, this.signer);
       const wrappedMantarayData = await this.bee.uploadData(batchId, wrappedMantarayRef, { act: true });
       const feedWriteResult = await wrappedMantarayFw.upload(batchId, wrappedMantarayData.reference, {
         index: undefined, // todo: keep track of the latest index ??
       });
       // TODO: properly handle feed data of wrapped feed addresses and histories
       const feedUpdate = {
-        mantarayFeedTopic: topicHex,
+        reference: topicHex,
         historyRef: wrappedMantarayData.historyAddress,
-      } as WrappedMantarayFeed;
+      } as ReferenceWithHistory;
 
       await this.saveFileInfoListFeed(feedUpdate, topicHex);
     } catch (error: any) {
       console.error(`Failed to save owner info feed: ${error}`);
       throw error;
     }
-
-    console.log(`File uploaded successfully: ${file}, Reference: ${wrappedMantarayRef}`);
-    return wrappedMantarayRef;
   }
 
   addToMantaray(mantaray: MantarayNode | undefined, reference: string, metadata: MetadataMapping = {}): void {
@@ -657,7 +651,7 @@ export class FileManager {
   }
 
   // TODO: problem: mantary impl. is old and does not return the history address
-  async saveMantaray(mantaray: MantarayNode | undefined, batchId: string | BatchId): Promise<string> {
+  async saveMantaray(batchId: string | BatchId, mantaray: MantarayNode | undefined): Promise<string> {
     mantaray = mantaray || this.mantaray;
     console.log('Saving Mantaray manifest...');
 
@@ -880,22 +874,21 @@ export class FileManager {
   }
 
   // Start feed handler methods
-  async saveFileInfoListFeed(feedUpdate: WrappedMantarayFeed, topicHex: string): Promise<void> {
+  async saveFileInfoListFeed(feedUpdate: ReferenceWithHistory, topicHex: string): Promise<void> {
     const ownerFeedStamp = await this.getOwnerFeedStamp();
     if (!ownerFeedStamp) {
       console.error('Owner feed stamp is not found.');
       return;
     }
 
-    const ix = this.mantarayFeedList.findIndex((f) => f.mantarayFeedTopic === topicHex);
+    const ix = this.mantarayFeedList.findIndex((f) => f.reference === topicHex);
     if (ix !== -1) {
       this.mantarayFeedList[ix] = feedUpdate;
     } else {
       this.mantarayFeedList.push(feedUpdate);
     }
 
-    const ownerFeedTopicHex = this.bee.makeFeedTopic(REFERENCE_LIST_TOPIC);
-    const ownerFeedWriter = this.bee.makeFeedWriter(DEFAULT_FEED_TYPE, ownerFeedTopicHex, this.privateKey);
+    const ownerFeedWriter = this.bee.makeFeedWriter(DEFAULT_FEED_TYPE, this.topic, this.signer);
     try {
       const mantarayFeedListData = await this.bee.uploadData(
         ownerFeedStamp.batchID,
@@ -905,9 +898,9 @@ export class FileManager {
         },
       );
       const ownerFeedData = {
-        mantarayListFeedRef: mantarayFeedListData.reference,
+        reference: mantarayFeedListData.reference,
         historyRef: mantarayFeedListData.historyAddress,
-      } as OwnerFeedData;
+      } as ReferenceWithHistory;
       const ownerFeedRawData = await this.bee.uploadData(ownerFeedStamp.batchID, JSON.stringify(ownerFeedData));
       const writeResult = await ownerFeedWriter.upload(ownerFeedStamp.batchID, ownerFeedRawData.reference, {
         index: numberToFeedIndex(this.nextOwnerFeedIndex),
@@ -1070,7 +1063,7 @@ export class FileManager {
 
         // TODO: create a fileinfo and update a the wrapped mantaray with it
         if (grantResult !== undefined) {
-          const feedMetadatRef = await this.updateWrappedMantaray({
+          const feedMetadatRef = await this.updateWrappedMantarayFeed({
             ...file,
             eGlRef: grantResult.ref,
             historyRef: grantResult.historyref,
@@ -1085,7 +1078,7 @@ export class FileManager {
       }
 
       const item = {
-        owner: this.address,
+        owner: this.wallet.address,
         references: historyRefs,
         timestamp: Date.now(),
         message: message,
