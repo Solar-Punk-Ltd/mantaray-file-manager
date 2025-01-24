@@ -102,7 +102,7 @@ export class FileManager {
       return uploadResponse.reference; // Ensure 64-byte reference
     });
 
-    if (manifestReference.length === 64) manifestReference.padEnd(128, '0');    // Ensure hex string length is 128
+    if (manifestReference.length === 64) manifestReference.padEnd(128, '0'); // Ensure hex string length is 128
     const hexManifestReference = manifestReference;
 
     // Create a feed writer and upload the manifest reference
