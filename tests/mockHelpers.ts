@@ -118,7 +118,7 @@ export function createMockMantarayNode(customForks: Record<string, any> = {}, ex
             prefix: encodePathToBytes('1.txt'),
             node: {
               isValueType: () => true,
-              getEntry: new Uint8Array(Buffer.from('a'.repeat(64), 'hex')), // Valid Uint8Array
+              getEntry: 'a'.repeat(64), // Valid Uint8Array
               getMetadata: {
                 Filename: '1.txt',
                 'Content-Type': 'text/plain',
@@ -129,7 +129,7 @@ export function createMockMantarayNode(customForks: Record<string, any> = {}, ex
             prefix: encodePathToBytes('2.txt'),
             node: {
               isValueType: () => true,
-              getEntry: new Uint8Array(Buffer.from('b'.repeat(64), 'hex')), // Valid Uint8Array
+              getEntry: 'b'.repeat(64), // Valid Uint8Array
               getMetadata: {
                 Filename: '2.txt',
                 'Content-Type': 'text/plain',

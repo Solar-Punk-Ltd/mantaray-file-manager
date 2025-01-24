@@ -1,5 +1,5 @@
 import { BatchId, Bee, PostageBatch, Reference, Utils } from '@ethersphere/bee-js';
-import { MantarayNode, MetadataMapping, Reference as MantarayRef } from '@solarpunkltd/mantaray-js';
+import { MantarayNode, MetadataMapping } from '@solarpunkltd/mantaray-js';
 import { Wallet } from 'ethers';
 import { readFileSync } from 'fs';
 import path from 'path';
@@ -99,10 +99,11 @@ export class FileManager {
     // Save the Mantaray structure and get the manifest reference (Uint8Array)
     const manifestReference = await this.mantaray.save(async (data) => {
       const uploadResponse = await this.bee.uploadData(stamp, data);
-      return Utils.hexToBytes(uploadResponse.reference) as Utils.Bytes<64>; // Ensure 64-byte reference
+      return uploadResponse.reference; // Ensure 64-byte reference
     });
 
-    const hexManifestReference = Utils.bytesToHex(manifestReference, 128); // Ensure hex string length is 128
+    if (manifestReference.length === 64) manifestReference.padEnd(128, '0'); // Ensure hex string length is 128
+    const hexManifestReference = manifestReference;
 
     // Create a feed writer and upload the manifest reference
     const writer = this.bee.makeFeedWriter('sequence', this.topic, this.wallet.privateKey);
@@ -320,11 +321,10 @@ export class FileManager {
       return { metadata };
     }
 
-    const hexReference = Utils.bytesToHex(fileReference);
-    console.log(`Downloading file with reference: ${hexReference}`);
+    console.log(`Downloading file with reference: ${fileReference}`);
 
     try {
-      const fileData = await this.bee.downloadFile(hexReference);
+      const fileData = await this.bee.downloadFile(fileReference);
       return {
         data: fileData.data ? Buffer.from(fileData.data).toString('utf-8').trim() : '',
         metadata,
@@ -463,23 +463,23 @@ export class FileManager {
       Filename: originalFileName, // Use the original filename here
     };
 
-    mantaray.addFork(bytesPath, Utils.hexToBytes(reference), metadataWithOriginalName);
+    mantaray.addFork(bytesPath, reference as Reference, metadataWithOriginalName);
   }
 
   async saveMantaray(mantaray: MantarayNode | undefined, stamp: string | BatchId) {
     mantaray = mantaray || this.mantaray;
     console.log('Saving Mantaray manifest...');
 
-    const saveFunction = async (data: Uint8Array): Promise<MantarayRef> => {
+    const saveFunction = async (data: Uint8Array): Promise<Reference> => {
       const fileName = 'manifest';
       const contentType = 'application/json';
       const uploadResponse = await this.bee.uploadFile(stamp, data, fileName, { contentType });
-      return Utils.hexToBytes(uploadResponse.reference);
+      return uploadResponse.reference;
     };
 
     const manifestReference = await mantaray.save(saveFunction);
 
-    const hexReference = Buffer.from(manifestReference).toString('hex');
+    const hexReference = manifestReference;
     console.log(`Mantaray manifest saved with reference: ${hexReference}`);
     return hexReference;
   }
