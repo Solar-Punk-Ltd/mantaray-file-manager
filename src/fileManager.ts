@@ -233,6 +233,10 @@ export class FileManager {
   }
   // End init methods
 
+  getFileInfoList(): FileInfo[] {
+    return this.fileInfoList;
+  }
+
   async loadMantaray(manifestReference: Reference, mantaray: MantarayNode | undefined): Promise<void> {
     mantaray = mantaray || this.mantaray;
     const loadFunction = async (address: Reference): Promise<Uint8Array> => {
