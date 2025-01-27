@@ -76,7 +76,7 @@ describe('FileManager - Initialize', () => {
     mockPins.forEach((pin) => {
       expect(fileManager.mantaray.addFork).toHaveBeenCalledWith(
         expect.any(Uint8Array), // Path (encoded from filename)
-        expect.any(Uint8Array), // Reference (encoded pin)
+        expect.any(String), // Reference (encoded pin)
         expect.objectContaining({
           Filename: `pinned-${pin.substring(0, 6)}`,
           pinned: 'true',
@@ -109,7 +109,7 @@ describe('FileManager - Mantaray manipulation', () => {
     // Verify that addFork was called with the correct arguments
     expect(fileManager.mantaray.addFork).toHaveBeenCalledWith(
       encodePathToBytes('1.txt'), // Encoded path for '1.txt'
-      Utils.hexToBytes('a'.repeat(64)), // Hex bytes of the reference
+      'a'.repeat(64), // Hex bytes of the reference
       expect.objectContaining({ Filename: '1.txt' }), // Metadata containing the filename
     );
   });
@@ -123,7 +123,7 @@ describe('FileManager - Mantaray manipulation', () => {
 
     expect(mantaray.addFork).toHaveBeenCalledWith(
       encodePathToBytes('file'), // Use encodePathToBytes to convert 'file' into bytes
-      expect.any(Uint8Array),
+      expect.any(String),
       expect.objectContaining({
         Author: 'Test Author',
         Filename: 'file',
@@ -141,7 +141,7 @@ describe('FileManager - Mantaray manipulation', () => {
 
     expect(addForkSpy).toHaveBeenCalledWith(
       encodePathToBytes('file'), // Use encodePathToBytes instead of Utils.hexToBytes
-      expect.any(Uint8Array),
+      expect.any(String),
       expect.objectContaining({ Filename: 'file' }),
     );
 
@@ -262,7 +262,7 @@ describe('FileManager - Upload File', () => {
 
     expect(addForkSpy).toHaveBeenCalledWith(
       encodePathToBytes('file1.txt'),
-      expect.any(Uint8Array),
+      expect.any(String),
       expect.objectContaining({
         Filename: 'file1.txt',
         'Content-Type': 'text/plain',
@@ -287,7 +287,7 @@ describe('FileManager - Upload File', () => {
 
     expect(addForkSpy).toHaveBeenCalledWith(
       encodePathToBytes('file2.txt'),
-      expect.any(Uint8Array),
+      expect.any(String),
       expect.objectContaining({
         Filename: 'file2.txt',
         'Content-Type': 'text/plain',
@@ -720,7 +720,7 @@ describe('FileManager - Download File', () => {
               prefix: encodePathToBytes('1.txt'),
               node: {
                 isValueType: () => true,
-                getEntry: new Uint8Array(Buffer.from('a'.repeat(64), 'hex')),
+                getEntry: 'a'.repeat(64),
                 getMetadata: {
                   Filename: '1.txt',
                   'Content-Type': 'text/plain',
