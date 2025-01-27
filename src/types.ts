@@ -1,9 +1,7 @@
-import { BatchId, Reference, ReferenceResponse } from '@ethersphere/bee-js';
-
 export interface FileInfo {
-  batchId: string | BatchId;
-  fileRef: string | Reference;
-  historyRef?: string | Reference;
+  batchId: string;
+  fileRef: string;
+  historyRef?: string;
   owner?: string;
   fileName?: string;
   timestamp?: number;
@@ -16,10 +14,13 @@ export interface ReferenceWithHistory {
   historyRef: string;
 }
 
+export interface WrappedMantarayFeed extends ReferenceWithHistory {
+  eGranteeRef?: string;
+}
+
 // TODO: unify own files with shared and add stamp data potentially
 export interface ShareItem {
-  owner: string;
-  references: string[];
+  fileInfoList: FileInfo[];
   timestamp?: number;
   message?: string;
 }
@@ -33,10 +34,5 @@ export interface Epoch {
   level: number;
 }
 export type Index = number | Epoch | IndexBytes | string;
-interface FeedUpdateHeaders {
-  feedIndex: Index;
-  feedIndexNext: string;
-}
-export interface FetchFeedUpdateResponse extends ReferenceResponse, FeedUpdateHeaders {}
 const feedTypes = ['sequence', 'epoch'] as const;
 export type FeedType = (typeof feedTypes)[number];

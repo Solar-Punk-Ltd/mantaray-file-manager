@@ -25,27 +25,23 @@ export function isStrictlyObject(value: unknown): value is Record<string, unknow
   return isObject(value) && !Array.isArray(value);
 }
 
-export function assertSharedMessage(value: unknown): asserts value is ShareItem {
+export function assertShareItem(value: unknown): asserts value is ShareItem {
   if (!isStrictlyObject(value)) {
-    throw new TypeError('SharedMessage has to be object!');
+    throw new TypeError('ShareItem has to be object!');
   }
 
-  const message = value as unknown as ShareItem;
+  const item = value as unknown as ShareItem;
 
-  if (typeof message.owner !== 'string') {
-    throw new TypeError('owner property of SharedMessage has to be string!');
+  if (!isObject(item)) {
+    throw new TypeError('ShareItem has to be object!');
   }
 
-  if (!Array.isArray(message.references)) {
-    throw new TypeError('references property of SharedMessage has to be array!');
+  if (item.timestamp !== undefined && typeof item.timestamp !== 'number') {
+    throw new TypeError('timestamp property of ShareItem has to be number!');
   }
 
-  if (message.timestamp !== undefined && typeof message.timestamp !== 'number') {
-    throw new TypeError('timestamp property of SharedMessage has to be number!');
-  }
-
-  if (message.message !== undefined && typeof message.message !== 'string') {
-    throw new TypeError('message property of SharedMessage has to be string!');
+  if (item.message !== undefined && typeof item.message !== 'string') {
+    throw new TypeError('message property of ShareItem has to be string!');
   }
 }
 
