@@ -1,6 +1,6 @@
 export interface FileInfo {
   batchId: string;
-  fileRef: string;
+  eFileRef: string;
   historyRef?: string;
   owner?: string;
   fileName?: string;
@@ -15,8 +15,9 @@ export interface ReferenceWithHistory {
   historyRef: string;
 }
 
+// TODO: consider using a completely seprarate type for the manifestfeed because of topic === reference
 export interface WrappedMantarayFeed extends ReferenceWithHistory {
-  fileInfoRef: string;
+  eFileRef?: string;
   eGranteeRef?: string;
 }
 
