@@ -32,10 +32,6 @@ export function assertShareItem(value: unknown): asserts value is ShareItem {
 
   const item = value as unknown as ShareItem;
 
-  if (!isObject(item)) {
-    throw new TypeError('ShareItem has to be object!');
-  }
-
   if (item.timestamp !== undefined && typeof item.timestamp !== 'number') {
     throw new TypeError('timestamp property of ShareItem has to be number!');
   }

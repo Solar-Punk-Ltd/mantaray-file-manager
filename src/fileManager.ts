@@ -10,6 +10,7 @@ import {
   Reference,
   REFERENCE_HEX_LENGTH,
   Signer,
+  STAMPS_DEPTH_MAX,
   TOPIC_HEX_LENGTH,
   Utils,
 } from '@ethersphere/bee-js';
@@ -54,7 +55,7 @@ export class FileManager {
   private mantarayFeedList: WrappedMantarayFeed[];
   private fileInfoList: FileInfo[];
   private nextOwnerFeedIndex: number;
-  private granteeLists: WrappedMantarayFeed[];
+  private granteeLists: WrappedMantarayFeed[]; // TODO: ? do I need this
   private sharedWithMe: ShareItem[];
   private sharedSubscription: PssSubscription;
   private topic: string;
@@ -91,29 +92,20 @@ export class FileManager {
   // Start init methods
   // TODO: use allSettled for file fetching and only save the ones that are successful
   async initialize(items: any | undefined): Promise<void> {
-    this.initOwnerTopic();
+    console.log('Importing stamps...');
+    await this.initStamps();
 
-    try {
-      console.log('Importing stamps...');
-      await this.initStamps();
-    } catch (error: any) {
-      console.error(`[ERROR] Failed to initialize stamps: ${error.message}`);
-      throw error;
-    }
+    const topicSuccess = await this.initOwnerTopic();
 
-    try {
-      console.log('Importing metadata of files...');
-      await this.initFileInfoList();
-    } catch (error: any) {
-      console.error(`[ERROR] Failed to initialize file metadata: ${error.message}`);
-      throw error;
-    }
-
-    // if stamp is not found than the file cannot be downloaded? is this necessary ??
-    for (const stamp of this.stampList) {
-      const ix = this.fileInfoList.findIndex((f) => stamp.batchID === f.batchId);
-      if (ix === undefined) {
-        this.fileInfoList.splice(ix, 1);
+    if (topicSuccess) {
+      console.log('Importing file info list...');
+      await this.initFileAndMantarayInfoList();
+      // if stamp is not found than the file cannot be downloaded? is this necessary ??
+      for (const stamp of this.stampList) {
+        const ix = this.fileInfoList.findIndex((f) => stamp.batchID === f.batchId);
+        if (ix === undefined) {
+          this.fileInfoList.splice(ix, 1);
+        }
       }
     }
 
@@ -128,22 +120,24 @@ export class FileManager {
       console.log('References imported successfully.');
     } catch (error: any) {
       console.error(`[ERROR] Failed to import references: ${error.message}`);
-      throw error;
     }
   }
 
-  async initOwnerTopic(): Promise<void> {
+  async initOwnerTopic(): Promise<boolean> {
     try {
       const topicHex = this.bee.makeFeedTopic(REFERENCE_LIST_TOPIC);
       const fw = this.bee.makeFeedWriter(DEFAULT_FEED_TYPE, topicHex, this.wallet.address);
       const topicData = await fw.download({ index: numberToFeedIndex(0) });
+
       if (makeNumericIndex(topicData.feedIndexNext) === 0) {
         const ownerFeedStamp = await this.getOwnerFeedStamp();
         if (ownerFeedStamp === undefined) {
           console.log('Owner stamp not found');
-          return;
+          return false;
         }
+
         this.topic = Utils.bytesToHex(randomBytes(TOPIC_HEX_LENGTH), TOPIC_HEX_LENGTH);
+
         const topicDataRes = await this.bee.uploadData(ownerFeedStamp.batchID, this.topic, { act: true });
         await fw.upload(ownerFeedStamp.batchID, topicDataRes.reference, { index: numberToFeedIndex(0) });
         await fw.upload(ownerFeedStamp.batchID, topicDataRes.historyAddress as Reference, {
@@ -152,11 +146,14 @@ export class FileManager {
       } else {
         const topicHistory = await fw.download({ index: numberToFeedIndex(1) });
         const options = makeBeeRequestOptions(topicHistory.reference, this.wallet.address);
+
         this.topic = Utils.bytesToHex(await this.bee.downloadData(topicData.reference, options));
       }
+
+      return true;
     } catch (error: any) {
       console.log('error reading owner topic feed: ', error);
-      throw error;
+      return false;
     }
   }
 
@@ -166,23 +163,12 @@ export class FileManager {
       console.log('Usable stamps fetched successfully.');
     } catch (error: any) {
       console.error(`Failed to fetch stamps: ${error}`);
-      throw error;
     }
   }
 
-  // TODO: refactor initFileInfoList
-  // async fetchWrappedFeedData(
-  //   topic: string,
-  //   address: string,
-  //   index?: number,
-  //   options?: BeeRequestOptions,
-  // ): Promise<any> {
-  //   const reader = this.bee.makeFeedReader(DEFAULT_FEED_TYPE, topic, address);
-  //   const refFeedData = await reader.download({ index: numberToFeedIndex(index) });
-  // }
-
+  // TODO: refactor -> seprate manataryfeed and fileinfo init
   // TODO: shared file feed similarly
-  async initFileInfoList(): Promise<void> {
+  async initFileAndMantarayInfoList(): Promise<void> {
     try {
       const ownerFR = this.bee.makeFeedReader(DEFAULT_FEED_TYPE, this.topic, this.wallet.address);
       const latestFeedData = await ownerFR.download();
@@ -193,7 +179,7 @@ export class FileManager {
 
       const options = makeBeeRequestOptions(ownerFeedData.historyRef, this.wallet.address);
       const mantarayFeedList = (await this.bee.downloadData(ownerFeedData.reference, options)).text();
-      this.mantarayFeedList = JSON.parse(mantarayFeedList) as ReferenceWithHistory[];
+      this.mantarayFeedList = JSON.parse(mantarayFeedList) as WrappedMantarayFeed[];
 
       for (const mantaryFeedItem of this.mantarayFeedList) {
         const wrappedMantarayFR = this.bee.makeFeedReader(
@@ -201,7 +187,7 @@ export class FileManager {
           mantaryFeedItem.reference,
           this.wallet.address,
         );
-        // TODO: donwload encrypted file info data
+
         const wrappedMantarayData = await wrappedMantarayFR.download();
         let options = makeBeeRequestOptions(mantaryFeedItem.historyRef, this.wallet.address);
         const wrappedMantarayRef = (
@@ -226,9 +212,9 @@ export class FileManager {
         const fileInfo = JSON.parse(JSON.stringify(await this.bee.downloadData(fileInfoRef, options))) as FileInfo;
         this.fileInfoList.push(fileInfo);
       }
-      console.log('Stamps fetched from feed.');
+      console.log('File info list fetched successfully.');
     } catch (error: any) {
-      console.error(`Failed to fetch stamps from feed: ${error}`);
+      console.error(`Failed to fetch info list: ${error}`);
     }
   }
   // End init methods
@@ -334,7 +320,7 @@ export class FileManager {
     return this.stampList;
   }
 
-  async getOwnerFeedStamp(): Promise<PostageBatch | undefined> {
+  getOwnerFeedStamp(): PostageBatch | undefined {
     return this.stampList.find((s) => s.label === OWNER_FEED_STAMP_LABEL);
   }
 
@@ -353,6 +339,39 @@ export class FileManager {
     } catch (error: any) {
       console.error(`Failed to get stamp with batchID ${batchId}: ${error.message}`);
     }
+  }
+
+  async destroyVolume(batchId: string): Promise<void> {
+    if (batchId === this.getOwnerFeedStamp()?.batchID) {
+      throw 'Cannot destroy owner stamp';
+    }
+
+    await this.bee.diluteBatch(batchId, STAMPS_DEPTH_MAX);
+    for (let i = 0; i < this.stampList.length; i++) {
+      if (this.stampList[i].batchID === batchId) {
+        this.stampList.splice(i, 1);
+        break;
+      }
+    }
+
+    // TODO: how to identify the fileinforef itself ?
+    const fileInfoRefs: string[] = [];
+    for (let i = 0; i < this.fileInfoList.length, ++i; ) {
+      if (this.fileInfoList[i].batchId === batchId) {
+        fileInfoRefs.push(this.fileInfoList[i]);
+        this.fileInfoList.splice(i, 1);
+      }
+    }
+
+    for (let i = 0; i < this.mantarayFeedList.length && i < fileInfoRefs.length, ++i; ) {
+      if (fileInfoRefs.includes(this.mantarayFeedList[i].fileInfoRef)) {
+        this.mantarayFeedList.splice(i, 1);
+      }
+    }
+
+    await this.saveMantarayFeedList();
+
+    console.log(`Volume destroyed: ${batchId}`);
   }
   // End stamp methods
 
@@ -554,17 +573,25 @@ export class FileManager {
     try {
       wrappedMantarayRef = await this.saveMantaray(batchId, mantaray);
     } catch (error: any) {
-      console.error(`Failed to save wrapped mantaray: ${error}`);
-      throw error;
+      throw `Failed to save wrapped mantaray: ${error}`;
     }
 
     const topicHex = refAsTopicHex || this.bee.makeFeedTopic(wrappedMantarayRef);
     const wrappedMantarayHistory = await this.updateWrappedMantarayFeed(batchId, wrappedMantarayRef, topicHex);
 
-    await this.saveFileInfoList({
+    const feedUpdate = {
       reference: topicHex,
       historyRef: wrappedMantarayHistory,
-    });
+      fileInfoRef: fileInfoRes.reference,
+    } as WrappedMantarayFeed;
+    const ix = this.mantarayFeedList.findIndex((f) => f.reference === feedUpdate.reference);
+    if (ix !== -1) {
+      this.mantarayFeedList[ix] = feedUpdate;
+    } else {
+      this.mantarayFeedList.push(feedUpdate);
+    }
+
+    await this.saveMantarayFeedList();
   }
 
   private async uploadFile(
@@ -587,8 +614,7 @@ export class FileManager {
       console.log(`File uploaded successfully: ${file}, Reference: ${uploadFileRes.reference}`);
       return { reference: uploadFileRes.reference, historyRef: uploadFileRes.historyAddress };
     } catch (error: any) {
-      console.error(`Failed to upload file ${file}: ${error.message}`);
-      throw error;
+      throw `Failed to upload file ${file}: ${error}`;
     }
   }
 
@@ -608,8 +634,7 @@ export class FileManager {
 
       return { reference: uploadInfoRes.reference, historyRef: uploadInfoRes.historyAddress };
     } catch (error: any) {
-      console.error(`Failed to save fileinfo: ${error}`);
-      throw error;
+      throw `Failed to save fileinfo: ${error}`;
     }
   }
 
@@ -627,8 +652,7 @@ export class FileManager {
 
       return uploadHistoryRes.reference;
     } catch (error: any) {
-      console.error(`Failed to save fileinfo history: ${error}`);
-      throw error;
+      throw `Failed to save fileinfo history: ${error}`;
     }
   }
 
@@ -647,8 +671,7 @@ export class FileManager {
 
       return wrappedMantarayData.historyAddress;
     } catch (error: any) {
-      console.error(`Failed to save owner info feed: ${error}`);
-      throw error;
+      throw `Failed to save owner info feed: ${error}`;
     }
   }
 
@@ -890,17 +913,10 @@ export class FileManager {
   }
 
   // Start feed handler methods
-  async saveFileInfoList(feedUpdate: WrappedMantarayFeed): Promise<void> {
-    const ownerFeedStamp = await this.getOwnerFeedStamp();
+  async saveMantarayFeedList(): Promise<void> {
+    const ownerFeedStamp = this.getOwnerFeedStamp();
     if (!ownerFeedStamp) {
       throw 'Owner feed stamp is not found.';
-    }
-
-    const ix = this.mantarayFeedList.findIndex((f) => f.reference === feedUpdate.reference);
-    if (ix !== -1) {
-      this.mantarayFeedList[ix] = feedUpdate;
-    } else {
-      this.mantarayFeedList.push(feedUpdate);
     }
 
     const ownerFeedWriter = this.bee.makeFeedWriter(DEFAULT_FEED_TYPE, this.topic, this.signer);
@@ -912,19 +928,21 @@ export class FileManager {
           act: true,
         },
       );
+
       const ownerFeedData = {
         reference: mantarayFeedListData.reference,
         historyRef: mantarayFeedListData.historyAddress,
       } as ReferenceWithHistory;
+
       const ownerFeedRawData = await this.bee.uploadData(ownerFeedStamp.batchID, JSON.stringify(ownerFeedData));
       const writeResult = await ownerFeedWriter.upload(ownerFeedStamp.batchID, ownerFeedRawData.reference, {
         index: numberToFeedIndex(this.nextOwnerFeedIndex),
       });
+
       this.nextOwnerFeedIndex += 1;
-      console.log('Metdata and owner feed updated: ', writeResult.reference);
+      console.log('File info list feed and owner feed updated: ', writeResult.reference);
     } catch (error: any) {
-      console.error(`Failed to update metdata and owner feed: ${error}`);
-      throw error;
+      throw `Failed to update File info list feed: ${error}`;
     }
   }
   // Start feed handler methods
@@ -1025,13 +1043,16 @@ export class FileManager {
 
   // Start share methods
   // TODO: do we want to save the shared items on a feed ?
-  subscribeToSharedInbox(): PssSubscription {
+  subscribeToSharedInbox(callback?: (data: ShareItem) => void): PssSubscription {
     return this.bee.pssSubscribe(SHARED_INBOX_TOPIC, {
       onMessage: (message) => {
         console.log('Received shared inbox message: ', message);
         assertShareItem(message);
         const msg = message as ShareItem;
         this.sharedWithMe.push(msg);
+        if (callback) {
+          callback(msg);
+        }
       },
       onError: (e) => {
         console.log('Error received in shared inbox: ', e.message);
@@ -1057,39 +1078,41 @@ export class FileManager {
     message?: string,
   ): Promise<void> {
     const fileRefs = files.map((f) => f.fileRef);
-    try {
-      for (let i = 0; i < fileRefs.length; i++) {
-        const ref = fileRefs[i];
-        const mf = this.mantarayFeedList.find((mf) => mf.reference === ref);
-        if (mf === undefined) {
-          throw 'File reference not found in mantaray feed list.';
-        }
-
-        const fileInfo = this.fileInfoList.find((f) => f.fileRef === ref);
-        if (fileInfo === undefined) {
-          console.log('File not found for reference: ', ref);
-          continue;
-        }
-
-        const granteeRef = await this.handleGrantees(batchId, fileInfo, { add: recipients });
-
-        await this.saveFileInfoList({
-          reference: mf.reference,
-          historyRef: mf.historyRef,
-          eGranteeRef: granteeRef.ref,
-        });
+    for (let i = 0; i < fileRefs.length; i++) {
+      const ref = fileRefs[i];
+      const mfIx = this.mantarayFeedList.findIndex((mf) => mf.reference === ref);
+      if (mfIx === -1) {
+        console.log('File reference not found in mantaray feed list.');
+        continue;
       }
 
-      const item = {
-        fileInfoList: files,
-        timestamp: Date.now(),
-        message: message,
-      } as ShareItem;
+      const fileInfo = this.fileInfoList.find((f) => f.fileRef === ref);
+      if (fileInfo === undefined) {
+        console.log('File not found for reference: ', ref);
+        continue;
+      }
 
-      await this.sendShareMessage(batchId, targetOverlays, item, recipients);
-    } catch (error: any) {
-      console.log('Failed to share items: ', error);
+      try {
+        const grantResult = await this.handleGrantees(batchId, fileInfo, { add: recipients });
+
+        this.mantarayFeedList[mfIx] = {
+          ...this.mantarayFeedList[mfIx],
+          eGranteeRef: grantResult.ref,
+        } as WrappedMantarayFeed;
+      } catch (error) {
+        console.error(`Falied to update grantee list for reference ${ref}:\n${error}`);
+      }
     }
+
+    this.saveMantarayFeedList();
+
+    const item = {
+      fileInfoList: files,
+      timestamp: Date.now(),
+      message: message,
+    } as ShareItem;
+
+    this.sendShareMessage(batchId, targetOverlays, item, recipients);
   }
 
   // recipient is optional, if not provided the message will be broadcasted == pss public key
@@ -1109,7 +1132,7 @@ export class FileManager {
       try {
         const target = Utils.makeMaxTarget(targetOverlays[i]);
         const msgData = new Uint8Array(Buffer.from(JSON.stringify(item)));
-        await this.bee.pssSend(batchId, SHARED_INBOX_TOPIC, target, msgData, recipients[i]);
+        this.bee.pssSend(batchId, SHARED_INBOX_TOPIC, target, msgData, recipients[i]);
       } catch (error: any) {
         console.log(`Failed to share item with recipient: ${recipients[i]}\n `, error);
       }
@@ -1120,8 +1143,7 @@ export class FileManager {
     const references = this.sharedWithMe.map((si) => si.fileInfoList.map((fi) => fi.fileRef)).flat();
 
     if (!references.includes(file.fileRef)) {
-      console.log('Cannot find file reference in shared messages: ', file.fileRef);
-      return;
+      throw `Cannot find file reference in shared messages: ${file.fileRef}`;
     }
 
     const options = makeBeeRequestOptions(file.historyRef, file.owner, file.timestamp);
@@ -1131,7 +1153,7 @@ export class FileManager {
       const data = await this.bee.downloadFile(file.fileRef, path, options);
       return data.data;
     } catch (error: any) {
-      console.error(`Failed to download shared file ${file.fileRef}\n: ${error}`);
+      throw `Failed to download shared file ${file.fileRef}\n: ${error}`;
     }
   }
   // End share methods

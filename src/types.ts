@@ -6,7 +6,8 @@ export interface FileInfo {
   fileName?: string;
   timestamp?: number;
   shared?: boolean;
-  customMetadata?: Record<string, string>;
+  preview?: string;
+  customMetadata?: Record<string, unknown>;
 }
 
 export interface ReferenceWithHistory {
@@ -15,10 +16,10 @@ export interface ReferenceWithHistory {
 }
 
 export interface WrappedMantarayFeed extends ReferenceWithHistory {
+  fileInfoRef: string;
   eGranteeRef?: string;
 }
 
-// TODO: unify own files with shared and add stamp data potentially
 export interface ShareItem {
   fileInfoList: FileInfo[];
   timestamp?: number;
