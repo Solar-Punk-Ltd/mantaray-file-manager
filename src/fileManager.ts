@@ -103,13 +103,12 @@ export class FileManager {
     });
 
     if (manifestReference.length === 64) manifestReference.padEnd(128, '0'); // Ensure hex string length is 128
-    const hexManifestReference = manifestReference;
 
     // Create a feed writer and upload the manifest reference
     const writer = this.bee.makeFeedWriter('sequence', this.topic, this.wallet.privateKey);
-    await writer.upload(stamp, hexManifestReference as Reference); // Explicitly cast to Reference
+    await writer.upload(stamp, manifestReference as Reference); // Explicitly cast to Reference
 
-    console.log(`Feed updated with reference: ${hexManifestReference}`);
+    console.log(`Feed updated with reference: ${manifestReference}`);
   }
 
   async fetchFeed() {
