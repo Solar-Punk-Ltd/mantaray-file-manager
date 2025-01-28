@@ -12,7 +12,7 @@ const wallet = {
   privateKey: 'af829bfc5c90818776f0b3d587c14c8e7a4222b781e9f7ebc6e527f4dfd117c2',
 };
 
-async function main() {
+async function main(): Promise<void> {
   try {
     console.log('### Simulation: FileManager Operations ###');
 
