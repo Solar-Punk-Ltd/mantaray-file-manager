@@ -3,8 +3,8 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { MantarayNode } from '@solarpunkltd/mantaray-js';
 import { hexlify } from 'ethers';
 
-import { FileManager } from '../src/fileManager';
-import { encodePathToBytes } from '../src/utils';
+import { FileManager } from '../../src/fileManager';
+import { encodePathToBytes } from '../../src/utils';
 
 import { createMockBee, createMockMantarayNode } from './mockHelpers';
 

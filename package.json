@@ -3,15 +3,16 @@
   "version": "1.0.0",
   "description": "A file manager for uploading and managing files on Swarm using Mantaray.",
   "main": "dist/fileManager.js",
-  "scripts": {
-    "build": "tsc",
-    "test": "node --loader ts-node/esm node_modules/jest/bin/jest.js",
-    "test:coverage": "jest --coverage",
-    "start": "npm run build && node dist/index.js",
-    "lint": "eslint . --ext ts --report-unused-disable-directives",
-    "lint:fix": "npm run lint -- --fix",
-    "prepare": "npm run lint"
-  },
+"scripts": {
+  "build": "tsc",
+  "test": "node --loader ts-node/esm node_modules/jest/bin/jest.js",
+  "test:integration": "node --loader ts-node/esm node_modules/jest/bin/jest.js --config=jest.integration.config.ts --runInBand",
+  "test:coverage": "node --loader ts-node/esm node_modules/jest/bin/jest.js --coverage",
+  "start": "npm run build && node dist/index.js",
+  "lint": "eslint . --ext ts --report-unused-disable-directives",
+  "lint:fix": "npm run lint -- --fix",
+  "prepare": "npm run lint"
+},
   "keywords": [
     "swarm",
     "mantaray",

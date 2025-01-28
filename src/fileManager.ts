@@ -33,10 +33,18 @@ export class FileManager {
     this.stampList = [];
     this.nextStampFeedIndex = '';
     this.privateKey = privateKey;
-    this.wallet = new Wallet(privateKey);
+
+    try {
+      this.wallet = new Wallet(privateKey);
+    } catch (error) {
+      if (error instanceof Error) {
+        throw new Error(`Invalid private key provided: ${error.message}`);
+      }
+      throw new Error('Invalid private key provided: Unknown error occurred.');
+    }
+
     this.address = this.wallet.address;
     this.topic = Utils.bytesToHex(Utils.keccak256Hash(STAMP_LIST_TOPIC));
-
     this.mantaray = new MantarayNode();
     this.importedFiles = [];
   }
@@ -564,14 +572,25 @@ export class FileManager {
       const { node, path: currentPath } = item;
       const forks = node.forks;
 
-      if (!forks) continue;
+      if (!forks) {
+        console.warn(`No forks found at path: ${currentPath}`);
+        continue;
+      }
 
       for (const [key, fork] of Object.entries(forks)) {
-        const prefix = fork.prefix ? decodeBytesToPath(fork.prefix) : key || 'unknown'; // Decode path
-        const fullPath = path.join(currentPath, prefix);
+        let prefix = key || 'unknown'; // Use key if prefix is empty
 
-        if (fork.node.isValueType()) {
-          const metadata = fork.node.getMetadata || {};
+        if (fork.prefix && fork.prefix.length > 0) {
+          prefix = decodeBytesToPath(fork.prefix);
+        } else if (fork.prefix instanceof Uint8Array && fork.prefix.length === 0) {
+          console.warn(`Empty prefix found for ${key}, using key as prefix.`);
+          prefix = key;
+        }
+
+        const fullPath = currentPath ? `${currentPath}/${prefix}` : prefix;
+
+        if (fork.node && typeof fork.node.isValueType === 'function' && fork.node.isValueType()) {
+          const metadata = fork.node.getMetadata ? fork.node.getMetadata : {};
           let originalPath = fullPath;
 
           if (metadata['Custom-Metadata']) {
@@ -583,16 +602,15 @@ export class FileManager {
             }
           }
 
-          // Conditionally include metadata
           const fileEntry = includeMetadata ? { metadata, path: originalPath } : { path: originalPath };
-
           fileList.push(fileEntry);
-        } else {
+        } else if (fork.node) {
           stack.push({ node: fork.node, path: fullPath });
         }
       }
     }
 
+    console.log('Final file list:', fileList);
     return fileList;
   }
 

@@ -29,11 +29,22 @@ export function encodePathToBytes(pathString: string) {
   return new TextEncoder().encode(pathString);
 }
 
-export function decodeBytesToPath(bytes: Uint8Array) {
+export function decodeBytesToPath(bytes: Uint8Array | string | undefined): string {
+  if (!bytes) {
+    console.warn('Received undefined or empty bytes, returning empty string.');
+    return '';
+  }
+
+  if (!(bytes instanceof Uint8Array)) {
+    console.warn('Invalid byte input detected, converting to Uint8Array.');
+    bytes = new TextEncoder().encode(String(bytes)); // Convert to Uint8Array
+  }
+
   if (bytes.length !== 32) {
     const paddedBytes = new Uint8Array(32);
-    paddedBytes.set(bytes.slice(0, 32)); // Truncate or pad the input to ensure it's 32 bytes
+    paddedBytes.set(bytes.subarray(0, 32)); // Use subarray instead of slice
     bytes = paddedBytes;
   }
+
   return new TextDecoder().decode(bytes);
 }
