@@ -32,6 +32,10 @@ export function assertShareItem(value: unknown): asserts value is ShareItem {
 
   const item = value as unknown as ShareItem;
 
+  if (!isStrictlyObject(item.fileInfo)) {
+    throw new TypeError('ShareItem fileInfo has to be object!');
+  }
+
   if (item.timestamp !== undefined && typeof item.timestamp !== 'number') {
     throw new TypeError('timestamp property of ShareItem has to be number!');
   }

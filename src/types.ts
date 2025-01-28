@@ -22,7 +22,7 @@ export interface WrappedMantarayFeed extends ReferenceWithHistory {
 }
 
 export interface ShareItem {
-  fileInfoList: FileInfo[];
+  fileInfo: FileInfo;
   timestamp?: number;
   message?: string;
 }

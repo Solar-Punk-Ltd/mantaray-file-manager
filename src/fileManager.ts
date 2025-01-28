@@ -45,7 +45,6 @@ import {
 export class FileManager {
   // TODO: private vars
   public bee: Bee;
-  // TODO: is this.mantaray needed ? always a new mantaray instance is created when wokring on an item
   public mantaray: MantarayNode;
 
   private wallet: Wallet;
@@ -263,9 +262,6 @@ export class FileManager {
 
   async fetchFeed(): Promise<Reference> {
     console.log('Fetching the latest feed reference...');
-    if (!this.wallet) {
-      throw new Error('Wallet not initialized. Please call initializeFeed first.');
-    }
 
     const reader = this.bee.makeFeedReader(DEFAULT_FEED_TYPE, this.topic, this.wallet.address);
     try {
@@ -946,7 +942,6 @@ export class FileManager {
   // TODO: as of not only add is supported
   // updates the list of grantees who can access the file reference under the history reference
   async handleGrantees(
-    batchId: string,
     fileInfo: FileInfo,
     grantees: {
       add?: string[];
@@ -963,14 +958,19 @@ export class FileManager {
     let grantResult: GranteesResult;
     if (eGlRef !== undefined) {
       // TODO: history ref should be optional in bee-js
-      grantResult = await this.bee.patchGrantees(batchId, eGlRef, fileInfo.historyRef || SWARM_ZERO_ADDRESS, grantees);
+      grantResult = await this.bee.patchGrantees(
+        fileInfo.batchId,
+        eGlRef,
+        fileInfo.historyRef || SWARM_ZERO_ADDRESS,
+        grantees,
+      );
       console.log('Access patched, grantee list reference: ', grantResult.ref);
     } else {
       if (grantees.add === undefined || grantees.add.length === 0) {
         throw `No grantees specified.`;
       }
 
-      grantResult = await this.bee.createGrantees(batchId, grantees.add);
+      grantResult = await this.bee.createGrantees(fileInfo.batchId, grantees.add);
       console.log('Access granted, new grantee list reference: ', grantResult.ref);
     }
 
@@ -999,7 +999,6 @@ export class FileManager {
     });
   }
 
-  // TODO: do we need to cancel sub at shutdown ?
   unsubscribeFromSharedInbox(): void {
     if (this.sharedSubscription) {
       console.log('Unsubscribed from shared inbox, topic: ', this.sharedSubscription.topic);
@@ -1009,58 +1008,41 @@ export class FileManager {
 
   // TODO: allsettled
   async shareItems(
-    batchId: string,
-    files: FileInfo[],
+    fileInfo: FileInfo,
     targetOverlays: string[],
     recipients: string[],
     message?: string,
   ): Promise<void> {
-    const fileRefs = files.map((f) => f.eFileRef);
-    for (let i = 0; i < fileRefs.length; i++) {
-      const ref = fileRefs[i];
-      const mfIx = this.mantarayFeedList.findIndex((mf) => mf.reference === ref);
-      if (mfIx === -1) {
-        console.log('File reference not found in mantaray feed list.');
-        continue;
-      }
+    const mfIx = this.mantarayFeedList.findIndex((mf) => mf.reference === fileInfo.eFileRef);
+    if (mfIx === -1) {
+      console.log('File reference not found in mantaray feed list.');
+      return;
+    }
 
-      const fileInfo = this.fileInfoList.find((f) => f.eFileRef === ref);
-      if (fileInfo === undefined) {
-        console.log('File not found for reference: ', ref);
-        continue;
-      }
+    try {
+      const grantResult = await this.handleGrantees(fileInfo, { add: recipients });
 
-      try {
-        const grantResult = await this.handleGrantees(batchId, fileInfo, { add: recipients });
-
-        this.mantarayFeedList[mfIx] = {
-          ...this.mantarayFeedList[mfIx],
-          eGranteeRef: grantResult.ref,
-        };
-      } catch (error) {
-        console.error(`Falied to update grantee list for reference ${ref}:\n${error}`);
-      }
+      this.mantarayFeedList[mfIx] = {
+        ...this.mantarayFeedList[mfIx],
+        eGranteeRef: grantResult.ref,
+      };
+    } catch (error) {
+      console.error(`Falied to update grantee list for reference ${fileInfo.eFileRef}:\n${error}`);
     }
 
     this.saveMantarayFeedList();
 
     const item: ShareItem = {
-      fileInfoList: files,
+      fileInfo: fileInfo,
       timestamp: Date.now(),
       message: message,
     };
 
-    this.sendShareMessage(batchId, targetOverlays, item, recipients);
+    this.sendShareMessage(targetOverlays, item, recipients);
   }
 
   // recipient is optional, if not provided the message will be broadcasted == pss public key
-  async sendShareMessage(
-    batchId: string,
-    targetOverlays: string[],
-    item: ShareItem,
-    recipients: string[],
-  ): Promise<void> {
-    // TODO: valid length check of recipient and target
+  async sendShareMessage(targetOverlays: string[], item: ShareItem, recipients: string[]): Promise<void> {
     if (recipients.length === 0 || recipients.length !== targetOverlays.length) {
       console.log('Invalid recipients or  targetoverlays specified for sharing.');
       return;
@@ -1068,29 +1050,20 @@ export class FileManager {
 
     for (let i = 0; i < recipients.length; i++) {
       try {
+        // TODO: mining will take too long, 2 bytes are enough
         const target = Utils.makeMaxTarget(targetOverlays[i]);
         const msgData = new Uint8Array(Buffer.from(JSON.stringify(item)));
-        this.bee.pssSend(batchId, SHARED_INBOX_TOPIC, target, msgData, recipients[i]);
+        this.bee.pssSend(item.fileInfo.batchId, SHARED_INBOX_TOPIC, target, msgData, recipients[i]);
       } catch (error: any) {
         console.log(`Failed to share item with recipient: ${recipients[i]}\n `, error);
       }
     }
   }
 
-  // TODO: maybe use a fileinfo object instead of eFileRef
-  async downloadSharedItem(eFileRef: string, path?: string): Promise<FileData<Data> | undefined> {
-    let fileInfo: FileInfo | undefined;
-    for (let i = 0; i < this.sharedWithMe.length; i++) {
-      for (let j = 0; j < this.sharedWithMe[i].fileInfoList.length; j++) {
-        if (this.sharedWithMe[i].fileInfoList[j].eFileRef === eFileRef) {
-          fileInfo = this.sharedWithMe[i].fileInfoList[j];
-          break;
-        }
-      }
-    }
-
-    if (!fileInfo) {
-      throw `Cannot find file shared item with ref: ${eFileRef}`;
+  // TODO: download can be handled by the UI ?
+  async downloadSharedItem(fileInfo: FileInfo, path?: string): Promise<FileData<Data> | undefined> {
+    if (!this.sharedWithMe.find((item) => item.fileInfo.eFileRef === fileInfo.eFileRef)) {
+      throw `Cannot find shared item with ref: ${fileInfo.eFileRef}`;
     }
 
     const options = makeBeeRequestOptions(fileInfo.historyRef, fileInfo.owner, fileInfo.timestamp);
