@@ -1,8 +1,14 @@
-import { BeeRequestOptions, Utils } from '@ethersphere/bee-js';
+import {
+  BeeRequestOptions,
+  ENCRYPTED_REFERENCE_HEX_LENGTH,
+  Reference,
+  REFERENCE_HEX_LENGTH,
+  Utils,
+} from '@ethersphere/bee-js';
 import { Binary } from 'cafe-utility';
 import path from 'path';
 
-import { Index, ShareItem } from './types';
+import { FileInfo, Index, ReferenceWithHistory, ShareItem, WrappedMantarayFeed } from './types';
 
 export function getContentType(filePath: string): string {
   const ext = path.extname(filePath).toLowerCase();
@@ -17,12 +23,66 @@ export function getContentType(filePath: string): string {
   return contentTypes.get(ext) || 'application/octet-stream';
 }
 
+export function assertReference(value: unknown): asserts value is Reference {
+  try {
+    Utils.assertHexString(value, REFERENCE_HEX_LENGTH);
+  } catch (e) {
+    Utils.assertHexString(value, ENCRYPTED_REFERENCE_HEX_LENGTH);
+  }
+}
+
 export function isObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object';
 }
 
 export function isStrictlyObject(value: unknown): value is Record<string, unknown> {
   return isObject(value) && !Array.isArray(value);
+}
+
+export function isRecord(value: Record<string, string> | string[]): value is Record<string, string> {
+  return typeof value === 'object' && 'key' in value;
+}
+
+export function assertFileInfo(value: unknown): asserts value is FileInfo {
+  if (!isStrictlyObject(value)) {
+    throw new TypeError('FileInfo has to be object!');
+  }
+
+  const fi = value as unknown as FileInfo;
+
+  if (fi.customMetadata !== undefined && !isRecord(fi.customMetadata)) {
+    throw new TypeError('FileInfo customMetadata has to be object!');
+  }
+
+  if (fi.timestamp !== undefined && typeof fi.timestamp !== 'number') {
+    throw new TypeError('timestamp property of FileInfo has to be number!');
+  }
+
+  if (fi.owner !== undefined && !Utils.isHexEthAddress(fi.owner)) {
+    throw new TypeError('owner property of FileInfo has to be string!');
+  }
+
+  if (fi.fileName !== undefined && typeof fi.fileName !== 'string') {
+    throw new TypeError('fileName property of FileInfo has to be string!');
+  }
+
+  if (fi.preview !== undefined && typeof fi.preview !== 'string') {
+    throw new TypeError('preview property of FileInfo has to be string!');
+  }
+
+  if (fi.shared !== undefined && typeof fi.shared !== 'boolean') {
+    throw new TypeError('shared property of FileInfo has to be boolean!');
+  }
+
+  if (fi.historyRef !== undefined) {
+    assertReference(fi.historyRef);
+    throw new TypeError('historyRef property of FileInfo has to be a valid reference!');
+  }
+
+  if (fi.eFileRef !== undefined) {
+    assertReference(fi.eFileRef);
+    throw new TypeError('eFileRef property of FileInfo has to be a valid reference!');
+  }
 }
 
 export function assertShareItem(value: unknown): asserts value is ShareItem {
@@ -42,6 +102,44 @@ export function assertShareItem(value: unknown): asserts value is ShareItem {
 
   if (item.message !== undefined && typeof item.message !== 'string') {
     throw new TypeError('message property of ShareItem has to be string!');
+  }
+}
+
+export function assertReferenceWithHistory(value: unknown): asserts value is ReferenceWithHistory {
+  if (!isStrictlyObject(value)) {
+    throw new TypeError('ReferenceWithHistory has to be object!');
+  }
+
+  const rwh = value as unknown as ReferenceWithHistory;
+
+  if (rwh.historyRef !== undefined) {
+    assertReference(rwh.historyRef);
+    throw new TypeError('historyRef property of ReferenceWithHistory has to be a valid reference!');
+  }
+
+  if (rwh.reference !== undefined) {
+    assertReference(rwh.reference);
+    throw new TypeError('reference property of ReferenceWithHistory has to be a valid reference!');
+  }
+}
+
+export function assertWrappedMantarayFeed(value: unknown): asserts value is WrappedMantarayFeed {
+  if (!isStrictlyObject(value)) {
+    throw new TypeError('WrappedMantarayFeed has to be object!');
+  }
+
+  assertReferenceWithHistory(value);
+
+  const wmf = value as unknown as WrappedMantarayFeed;
+
+  if (wmf.eFileRef !== undefined) {
+    assertReference(wmf.eFileRef);
+    throw new TypeError('eFileRef property of WrappedMantarayFeed has to be a valid reference!');
+  }
+
+  if (wmf.eGranteeRef !== undefined) {
+    assertReference(wmf.eGranteeRef);
+    throw new TypeError('eGranteeRef property of WrappedMantarayFeed has to be a valid reference!');
   }
 }
 

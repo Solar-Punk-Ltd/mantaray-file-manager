@@ -1,13 +1,15 @@
+import { BatchId, Reference } from '@ethersphere/bee-js';
+
 export interface FileInfo {
-  batchId: string;
-  eFileRef: string;
-  historyRef?: string;
+  batchId: string | BatchId;
+  eFileRef: string | Reference;
+  historyRef?: string | Reference;
   owner?: string;
   fileName?: string;
   timestamp?: number;
   shared?: boolean;
   preview?: string;
-  customMetadata?: Record<string, unknown>;
+  customMetadata?: Record<string, string>;
 }
 
 export interface ReferenceWithHistory {
