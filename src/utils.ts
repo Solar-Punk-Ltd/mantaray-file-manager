@@ -1,8 +1,11 @@
 import {
+  Bee,
   BeeRequestOptions,
   ENCRYPTED_REFERENCE_HEX_LENGTH,
   Reference,
   REFERENCE_HEX_LENGTH,
+  Topic,
+  TOPIC_HEX_LENGTH,
   Utils,
 } from '@ethersphere/bee-js';
 import { Binary } from 'cafe-utility';
@@ -28,6 +31,12 @@ export function assertReference(value: unknown): asserts value is Reference {
     Utils.assertHexString(value, REFERENCE_HEX_LENGTH);
   } catch (e) {
     Utils.assertHexString(value, ENCRYPTED_REFERENCE_HEX_LENGTH);
+  }
+}
+
+export function assertTopic(value: unknown): asserts value is Topic {
+  if (!Utils.isHexString(value, TOPIC_HEX_LENGTH)) {
+    throw `Invalid feed topic: ${value}`;
   }
 }
 
@@ -72,6 +81,10 @@ export function assertFileInfo(value: unknown): asserts value is FileInfo {
 
   if (fi.shared !== undefined && typeof fi.shared !== 'boolean') {
     throw new TypeError('shared property of FileInfo has to be boolean!');
+  }
+
+  if (fi.redundancyLevel !== undefined && typeof fi.redundancyLevel !== 'number') {
+    throw new TypeError('redundancyLevel property of FileInfo has to be number!');
   }
 
   if (fi.historyRef !== undefined) {
@@ -204,4 +217,10 @@ export function makeNumericIndex(index: Index): number {
   }
 
   throw new TypeError(`Unknown type of index: ${index}`);
+}
+
+// status is undefined in the error object
+// Determines if the error is about 'Not Found'
+export function isNotFoundError(error: any): boolean {
+  return error.stack.includes('404') || error.message.includes('Not Found') || error.message.includes('404');
 }

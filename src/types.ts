@@ -1,4 +1,4 @@
-import { BatchId, Reference } from '@ethersphere/bee-js';
+import { BatchId, RedundancyLevel, Reference, ReferenceResponse } from '@ethersphere/bee-js';
 
 export interface FileInfo {
   batchId: string | BatchId;
@@ -9,18 +9,19 @@ export interface FileInfo {
   timestamp?: number;
   shared?: boolean;
   preview?: string;
+  redundancyLevel?: RedundancyLevel;
   customMetadata?: Record<string, string>;
 }
 
 export interface ReferenceWithHistory {
-  reference: string;
-  historyRef: string;
+  reference: string | Reference;
+  historyRef: string | Reference;
 }
 
 // TODO: consider using a completely seprarate type for the manifestfeed because of topic === reference
 export interface WrappedMantarayFeed extends ReferenceWithHistory {
-  eFileRef?: string;
-  eGranteeRef?: string;
+  eFileRef?: string | Reference;
+  eGranteeRef?: string | Reference;
 }
 
 export interface ShareItem {
@@ -37,6 +38,11 @@ export interface Epoch {
   time: number;
   level: number;
 }
+export interface FeedUpdateHeaders {
+  feedIndex: Index;
+  feedIndexNext: string;
+}
+export interface FetchFeedUpdateResponse extends ReferenceResponse, FeedUpdateHeaders {}
 export type Index = number | Epoch | IndexBytes | string;
 const feedTypes = ['sequence', 'epoch'] as const;
 export type FeedType = (typeof feedTypes)[number];
