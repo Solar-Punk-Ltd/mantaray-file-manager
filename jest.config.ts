@@ -4,6 +4,10 @@ module.exports = {
   transform: {
     '^.+\\.tsx?$': 'ts-jest',
   },
-  testMatch: ['**/tests/**/*.test.ts'],
+  rootDir: 'tests',
+  testMatch: ['**/tests/**/*.spec.ts'],
   moduleFileExtensions: ['ts', 'js'],
+  globals: {
+    window: {},
+  },
 };

@@ -5,7 +5,7 @@
   "main": "dist/fileManager.js",
   "scripts": {
     "build": "tsc",
-    "test": "node --loader ts-node/esm node_modules/jest/bin/jest.js",
+    "test": "jest --config=jest.config.ts --runInBand --verbose --detectOpenHandles",
     "test:coverage": "jest --coverage",
     "start": "npm run build && node dist/index.js",
     "lint": "eslint . --ext ts --report-unused-disable-directives",

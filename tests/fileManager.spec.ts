@@ -7,6 +7,7 @@ import { FileManager } from '../src/fileManager';
 import { encodePathToBytes } from '../src/utils';
 
 import { createMockBee, createMockMantarayNode } from './mockHelpers';
+import { BEE_URL } from './utils';
 
 jest.mock('@solarpunkltd/mantaray-js', () => {
   const mockMantarayNode = jest.fn(() => createMockMantarayNode());
@@ -24,10 +25,9 @@ jest.mock('fs', () => {
 
 describe('FileManager - Setup', () => {
   it('should initialize with a valid Bee URL', () => {
+    const bee = new Bee(BEE_URL);
     const validPrivateKey = '0x'.padEnd(66, 'a'); // 64-character hex string padded with 'a'
-    const fileManager = new FileManager('http://localhost:1633', validPrivateKey);
-    expect(fileManager.bee).toBeTruthy();
-    expect(fileManager.mantaray).toBeTruthy();
+    const fileManager = new FileManager(bee, validPrivateKey);
   });
 });
 

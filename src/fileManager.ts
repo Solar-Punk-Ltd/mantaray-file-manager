@@ -12,6 +12,7 @@ import {
   Signer,
   STAMPS_DEPTH_MAX,
   Topic,
+  TOPIC_BYTES_LENGTH,
   TOPIC_HEX_LENGTH,
   Utils,
 } from '@ethersphere/bee-js';
@@ -59,20 +60,13 @@ export class FileManager {
   private fileInfoList: FileInfo[];
   private nextOwnerFeedIndex: number;
   private sharedWithMe: ShareItem[];
-  private sharedSubscription: PssSubscription;
+  private sharedSubscription: PssSubscription | undefined;
   private ownerFeedTopic: Topic;
 
-  constructor(beeUrl: string, privateKey: string) {
-    if (!beeUrl) {
-      throw new Error('Bee URL is required for initializing the FileManager.');
-    }
-    if (!privateKey) {
-      throw new Error('privateKey is required for initializing the FileManager.');
-    }
-
+  constructor(bee: Bee, privateKey: string) {
     console.log('Initializing Bee client...');
-    this.bee = new Bee(beeUrl);
-    this.sharedSubscription = this.subscribeToSharedInbox(SHARED_INBOX_TOPIC);
+    this.bee = bee;
+    this.sharedSubscription = undefined;
     this.wallet = new Wallet(privateKey);
     this.signer = {
       address: Utils.hexToBytes(this.wallet.address.slice(2)),
@@ -91,7 +85,7 @@ export class FileManager {
 
   // Start init methods
   // TODO: use allSettled for file fetching and only save the ones that are successful
-  async initialize(items: any | undefined): Promise<void> {
+  async initialize(items?: any): Promise<void> {
     await this.initStamps();
     await this.initOwnerFeedTopic();
     await this.initMantarayFeedList();
@@ -115,16 +109,16 @@ export class FileManager {
     const referenceListTopicHex = this.bee.makeFeedTopic(REFERENCE_LIST_TOPIC);
     const feedTopicData = await this.getFeedData(referenceListTopicHex, this.wallet.address, 0);
 
-    if (feedTopicData.feedIndex === numberToFeedIndex(-1)) {
+    if (feedTopicData.reference === SWARM_ZERO_ADDRESS) {
       const ownerFeedStamp = this.getOwnerFeedStamp();
       if (ownerFeedStamp === undefined) {
         throw 'Owner stamp not found';
       }
 
-      this.ownerFeedTopic = Utils.bytesToHex(randomBytes(TOPIC_HEX_LENGTH), TOPIC_HEX_LENGTH);
+      this.ownerFeedTopic = Utils.bytesToHex(randomBytes(TOPIC_BYTES_LENGTH), TOPIC_HEX_LENGTH);
 
       const topicDataRes = await this.bee.uploadData(ownerFeedStamp.batchID, this.ownerFeedTopic, { act: true });
-      const fw = this.bee.makeFeedWriter(DEFAULT_FEED_TYPE, referenceListTopicHex, this.wallet.address);
+      const fw = this.bee.makeFeedWriter(DEFAULT_FEED_TYPE, referenceListTopicHex, this.signer);
       await fw.upload(ownerFeedStamp.batchID, topicDataRes.reference, { index: numberToFeedIndex(0) });
       await fw.upload(ownerFeedStamp.batchID, topicDataRes.historyAddress as Reference, {
         index: numberToFeedIndex(1),
@@ -149,8 +143,8 @@ export class FileManager {
   }
 
   private async initMantarayFeedList(): Promise<void> {
-    const latestFeedData = await this.getFeedData(this.ownerFeedTopic, this.wallet.address);
-    if (latestFeedData.feedIndex === numberToFeedIndex(-1)) {
+    const latestFeedData = await this.getFeedData(this.ownerFeedTopic);
+    if (latestFeedData.reference === SWARM_ZERO_ADDRESS) {
       console.log("Owner mantaray feed doesn't exist yet.");
       return;
     }
@@ -178,8 +172,8 @@ export class FileManager {
 
   private async initFileInfoList(): Promise<void> {
     for (const mantaryFeedItem of this.mantarayFeedList) {
-      const wrappedMantarayData = await this.getFeedData(mantaryFeedItem.reference, this.wallet.address);
-      if (wrappedMantarayData.feedIndex === numberToFeedIndex(-1)) {
+      const wrappedMantarayData = await this.getFeedData(mantaryFeedItem.reference);
+      if (wrappedMantarayData.reference === SWARM_ZERO_ADDRESS) {
         console.log("mantaryFeedItem doesn't exist, skipping it.");
         continue;
       }
@@ -285,7 +279,7 @@ export class FileManager {
   }
 
   // Start stamp methods
-  async getUsableStamps(): Promise<PostageBatch[]> {
+  private async getUsableStamps(): Promise<PostageBatch[]> {
     try {
       return (await this.bee.getAllPostageBatch()).filter((s) => s.usable);
     } catch (error: any) {
@@ -321,7 +315,7 @@ export class FileManager {
     return this.stampList.find((s) => s.label === OWNER_FEED_STAMP_LABEL);
   }
 
-  async getCachedStamp(batchId: string | BatchId): Promise<PostageBatch | undefined> {
+  getCachedStamp(batchId: string | BatchId): PostageBatch | undefined {
     return this.stampList.find((s) => s.batchID === batchId);
   }
 
@@ -977,7 +971,7 @@ export class FileManager {
   // Start share methods
   subscribeToSharedInbox(topic: string, callback?: (data: ShareItem) => void): PssSubscription {
     console.log('Subscribing to shared inbox, topic: ', topic);
-    return this.bee.pssSubscribe(topic, {
+    this.sharedSubscription = this.bee.pssSubscribe(topic, {
       onMessage: (message) => {
         console.log('Received shared inbox message: ', message);
         assertShareItem(message);
@@ -991,6 +985,8 @@ export class FileManager {
         throw e;
       },
     });
+
+    return this.sharedSubscription;
   }
 
   unsubscribeFromSharedInbox(): void {
@@ -1049,9 +1045,9 @@ export class FileManager {
   }
   // End share methods
 
-  private async getFeedData(topic: string, address: string, index?: number): Promise<FetchFeedUpdateResponse> {
+  public async getFeedData(topic: string, address?: string, index?: number): Promise<FetchFeedUpdateResponse> {
     try {
-      const feedReader = this.bee.makeFeedReader(DEFAULT_FEED_TYPE, topic, address);
+      const feedReader = this.bee.makeFeedReader(DEFAULT_FEED_TYPE, topic, address || this.wallet.address);
       return await feedReader.download({ index: numberToFeedIndex(index) });
     } catch (error) {
       if (isNotFoundError(error)) {
