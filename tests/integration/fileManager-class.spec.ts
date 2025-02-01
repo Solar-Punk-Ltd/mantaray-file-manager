@@ -5,7 +5,7 @@ import { MantarayNode } from '@solarpunkltd/mantaray-js';
 import { OWNER_FEED_STAMP_LABEL, REFERENCE_LIST_TOPIC, SWARM_ZERO_ADDRESS } from '../../src/constants';
 import { FileManager } from '../../src/fileManager';
 import { encodePathToBytes, makeBeeRequestOptions } from '../../src/utils';
-import { BEE_URL, buyStamp, MOCK_PK, MOCK_WALLET } from '../utils';
+import { BEE_URL, buyStamp, MOCK_PRIV_KEY, MOCK_WALLET } from '../utils';
 
 jest.mock('fs', () => {
   const mockBuffer = jest.fn(() => Buffer.from('Mock file content'));
@@ -23,11 +23,10 @@ describe('FileManager instantiation', () => {
     const bee = new Bee(BEE_URL);
     // const f = async (): Promise<any> => new FileManager(bee, MOCK_PK);
     // const fileManager = (await f()) as FileManager;
-    const fileManager = new FileManager(bee, MOCK_PK);
+    const fileManager = new FileManager(bee, MOCK_PRIV_KEY);
     try {
       await fileManager.initialize();
     } catch (error: any) {
-      console.log('bagoy error: ', error);
       expect(error).toEqual('Owner stamp not found');
     }
     const stamps = await fileManager.getStamps();
@@ -39,7 +38,8 @@ describe('FileManager instantiation', () => {
   it('should fetch the owner stamp and initialize the owner feed', async () => {
     const bee = new Bee(BEE_URL);
     const batchId = await buyStamp(bee, OWNER_FEED_STAMP_LABEL);
-    const fileManager = new FileManager(bee, MOCK_PK);
+    const fileManager = new FileManager(bee, MOCK_PRIV_KEY);
+    const mockPubKey = (await bee.getNodeAddresses()).publicKey;
     await fileManager.initialize();
 
     const stamps = await fileManager.getStamps();
@@ -51,7 +51,7 @@ describe('FileManager instantiation', () => {
     const referenceListTopicHex = bee.makeFeedTopic(REFERENCE_LIST_TOPIC);
     const feedTopicData = await fileManager.getFeedData(referenceListTopicHex, MOCK_WALLET.address, 0);
     const topicHistory = await fileManager.getFeedData(referenceListTopicHex, MOCK_WALLET.address, 1);
-    const options = makeBeeRequestOptions(topicHistory.reference, MOCK_WALLET.address);
+    const options = makeBeeRequestOptions(topicHistory.reference, mockPubKey);
     // TODO: fails here
     const topicHex = (await bee.downloadData(feedTopicData.reference, options)).text() as Topic;
     expect(topicHex !== SWARM_ZERO_ADDRESS).toBeTruthy();

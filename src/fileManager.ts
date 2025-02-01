@@ -5,6 +5,7 @@ import {
   Data,
   GetGranteesResult,
   GranteesResult,
+  NodeAddresses,
   PostageBatch,
   PssSubscription,
   RedundancyLevel,
@@ -125,7 +126,8 @@ export class FileManager {
       });
     } else {
       const topicHistory = await this.getFeedData(referenceListTopicHex, this.wallet.address, 1);
-      const options = makeBeeRequestOptions(topicHistory.reference, this.wallet.address);
+      const publicKey = (await this.bee.getNodeAddresses()).publicKey;
+      const options = makeBeeRequestOptions(topicHistory.reference, publicKey);
 
       const topicHex = (await this.bee.downloadData(feedTopicData.reference, options)).text();
       assertTopic(topicHex);
@@ -154,7 +156,8 @@ export class FileManager {
     const ownerFeedData = JSON.parse(ownerFeedRawData.text());
     assertReferenceWithHistory(ownerFeedData);
 
-    const options = makeBeeRequestOptions(ownerFeedData.historyRef, this.wallet.address);
+    const publicKey = (await this.bee.getNodeAddresses()).publicKey;
+    const options = makeBeeRequestOptions(ownerFeedData.historyRef, publicKey);
     const mantarayFeedListRawData = await this.bee.downloadData(ownerFeedData.reference, options);
     const mantarayFeedListData: WrappedMantarayFeed[] = JSON.parse(mantarayFeedListRawData.text());
 
@@ -178,7 +181,8 @@ export class FileManager {
         continue;
       }
 
-      let options = makeBeeRequestOptions(mantaryFeedItem.historyRef, this.wallet.address);
+      const publicKey = (await this.bee.getNodeAddresses()).publicKey;
+      let options = makeBeeRequestOptions(mantaryFeedItem.historyRef, publicKey);
       const wrappedMantarayRef = (await this.bee.downloadData(wrappedMantarayData.reference, options)).text();
       assertReference(wrappedMantarayRef);
 
@@ -206,7 +210,7 @@ export class FileManager {
         continue;
       }
 
-      options = makeBeeRequestOptions(historyRef, this.wallet.address);
+      options = makeBeeRequestOptions(historyRef, publicKey);
       const fileInfoRawData = await this.bee.downloadData(fileInfoEntry, options);
       const fileInfoData: FileInfo = JSON.parse(fileInfoRawData.text());
 
@@ -220,6 +224,7 @@ export class FileManager {
 
     console.log('File info list fetched successfully.');
   }
+
   // End init methods
 
   getFileInfoList(): FileInfo[] {
