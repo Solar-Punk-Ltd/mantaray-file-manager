@@ -1,8 +1,8 @@
 import {
-  Bee,
   BeeRequestOptions,
   ENCRYPTED_REFERENCE_HEX_LENGTH,
   Reference,
+  REFERENCE_BYTES_LENGTH,
   REFERENCE_HEX_LENGTH,
   Topic,
   TOPIC_HEX_LENGTH,
@@ -52,12 +52,23 @@ export function isRecord(value: Record<string, string> | string[]): value is Rec
   return typeof value === 'object' && 'key' in value;
 }
 
+// TODO: fix assertions - must have certain properties
 export function assertFileInfo(value: unknown): asserts value is FileInfo {
   if (!isStrictlyObject(value)) {
     throw new TypeError('FileInfo has to be object!');
   }
 
   const fi = value as unknown as FileInfo;
+
+  assertReference(fi.eFileRef);
+
+  if (fi.batchId === undefined || typeof fi.batchId !== 'string') {
+    throw new TypeError('batchId property of FileInfo has to be string!');
+  }
+
+  if (fi.historyRef !== undefined) {
+    assertReference(fi.historyRef);
+  }
 
   if (fi.customMetadata !== undefined && !isRecord(fi.customMetadata)) {
     throw new TypeError('FileInfo customMetadata has to be object!');
@@ -85,16 +96,6 @@ export function assertFileInfo(value: unknown): asserts value is FileInfo {
 
   if (fi.redundancyLevel !== undefined && typeof fi.redundancyLevel !== 'number') {
     throw new TypeError('redundancyLevel property of FileInfo has to be number!');
-  }
-
-  if (fi.historyRef !== undefined) {
-    assertReference(fi.historyRef);
-    throw new TypeError('historyRef property of FileInfo has to be a valid reference!');
-  }
-
-  if (fi.eFileRef !== undefined) {
-    assertReference(fi.eFileRef);
-    throw new TypeError('eFileRef property of FileInfo has to be a valid reference!');
   }
 }
 
@@ -125,15 +126,9 @@ export function assertReferenceWithHistory(value: unknown): asserts value is Ref
 
   const rwh = value as unknown as ReferenceWithHistory;
 
-  if (rwh.historyRef !== undefined) {
-    assertReference(rwh.historyRef);
-    throw new TypeError('historyRef property of ReferenceWithHistory has to be a valid reference!');
-  }
+  assertReference(rwh.historyRef);
 
-  if (rwh.reference !== undefined) {
-    assertReference(rwh.reference);
-    throw new TypeError('reference property of ReferenceWithHistory has to be a valid reference!');
-  }
+  assertReference(rwh.reference);
 }
 
 export function assertWrappedMantarayFeed(value: unknown): asserts value is WrappedMantarayFeed {
@@ -147,19 +142,17 @@ export function assertWrappedMantarayFeed(value: unknown): asserts value is Wrap
 
   if (wmf.eFileRef !== undefined) {
     assertReference(wmf.eFileRef);
-    throw new TypeError('eFileRef property of WrappedMantarayFeed has to be a valid reference!');
   }
 
   if (wmf.eGranteeRef !== undefined) {
     assertReference(wmf.eGranteeRef);
-    throw new TypeError('eGranteeRef property of WrappedMantarayFeed has to be a valid reference!');
   }
 }
 
 export function decodeBytesToPath(bytes: Uint8Array): string {
-  if (bytes.length !== 32) {
-    const paddedBytes = new Uint8Array(32);
-    paddedBytes.set(bytes.slice(0, 32)); // Truncate or pad the input to ensure it's 32 bytes
+  if (bytes.length !== REFERENCE_BYTES_LENGTH) {
+    const paddedBytes = new Uint8Array(REFERENCE_BYTES_LENGTH);
+    paddedBytes.set(bytes.slice(0, REFERENCE_BYTES_LENGTH)); // Truncate or pad the input to ensure it's 32 bytes
     bytes = paddedBytes;
   }
   return new TextDecoder().decode(bytes);

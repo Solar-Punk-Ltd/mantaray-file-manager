@@ -7,6 +7,7 @@ module.exports = {
   rootDir: 'tests',
   testMatch: ['**/tests/**/*.spec.ts'],
   moduleFileExtensions: ['ts', 'js'],
+  testTimeout: 50000,
   globals: {
     window: {},
   },

@@ -34,7 +34,14 @@ import {
   SHARED_INBOX_TOPIC,
   SWARM_ZERO_ADDRESS,
 } from './constants';
-import { FetchFeedUpdateResponse, FileInfo, ReferenceWithHistory, ShareItem, WrappedMantarayFeed } from './types';
+import {
+  Bytes,
+  FetchFeedUpdateResponse,
+  FileInfo,
+  ReferenceWithHistory,
+  ShareItem,
+  WrappedMantarayFeed,
+} from './types';
 import {
   assertFileInfo,
   assertReference,
@@ -79,7 +86,7 @@ export class FileManager {
     this.importedReferences = [];
     this.fileInfoList = [];
     this.mantarayFeedList = [];
-    this.nextOwnerFeedIndex = -1;
+    this.nextOwnerFeedIndex = 0;
     this.ownerFeedTopic = this.bee.makeFeedTopic(SWARM_ZERO_ADDRESS);
     this.sharedWithMe = [];
   }
@@ -117,7 +124,6 @@ export class FileManager {
       }
 
       this.ownerFeedTopic = Utils.bytesToHex(randomBytes(TOPIC_BYTES_LENGTH), TOPIC_HEX_LENGTH);
-
       const topicDataRes = await this.bee.uploadData(ownerFeedStamp.batchID, this.ownerFeedTopic, { act: true });
       const fw = this.bee.makeFeedWriter(DEFAULT_FEED_TYPE, referenceListTopicHex, this.signer);
       await fw.upload(ownerFeedStamp.batchID, topicDataRes.reference, { index: numberToFeedIndex(0) });
@@ -144,21 +150,24 @@ export class FileManager {
     }
   }
 
+  // TODO: first need to init the mantaray feed with the topic
   private async initMantarayFeedList(): Promise<void> {
     const latestFeedData = await this.getFeedData(this.ownerFeedTopic);
     if (latestFeedData.reference === SWARM_ZERO_ADDRESS) {
       console.log("Owner mantaray feed doesn't exist yet.");
       return;
     }
-    this.nextOwnerFeedIndex = makeNumericIndex(latestFeedData.feedIndexNext);
 
-    const ownerFeedRawData = await this.bee.downloadData(latestFeedData.reference);
-    const ownerFeedData = JSON.parse(ownerFeedRawData.text());
-    assertReferenceWithHistory(ownerFeedData);
+    this.nextOwnerFeedIndex = makeNumericIndex(latestFeedData.feedIndexNext);
+    const refWithHistory = latestFeedData as unknown as ReferenceWithHistory;
+    assertReferenceWithHistory(refWithHistory);
+    // const ownerFeedRawData = await this.bee.downloadData(latestFeedData.reference);
+    // const ownerFeedData = JSON.parse(ownerFeedRawData.text());
+    // assertReferenceWithHistory(ownerFeedData);
 
     const publicKey = (await this.bee.getNodeAddresses()).publicKey;
-    const options = makeBeeRequestOptions(ownerFeedData.historyRef, publicKey);
-    const mantarayFeedListRawData = await this.bee.downloadData(ownerFeedData.reference, options);
+    const options = makeBeeRequestOptions(refWithHistory.historyRef, publicKey);
+    const mantarayFeedListRawData = await this.bee.downloadData(refWithHistory.reference, options);
     const mantarayFeedListData: WrappedMantarayFeed[] = JSON.parse(mantarayFeedListRawData.text());
 
     for (const wmf of mantarayFeedListData) {
@@ -173,6 +182,8 @@ export class FileManager {
     console.log('Mantaray feed list fetched successfully.');
   }
 
+  // TODO: at this point we already have the efilerRef, so we can use it to fetch the data
+  // TODO: already unwrapped historyRef by bee ?
   private async initFileInfoList(): Promise<void> {
     for (const mantaryFeedItem of this.mantarayFeedList) {
       const wrappedMantarayData = await this.getFeedData(mantaryFeedItem.reference);
@@ -186,7 +197,9 @@ export class FileManager {
       const wrappedMantarayRef = (await this.bee.downloadData(wrappedMantarayData.reference, options)).text();
       assertReference(wrappedMantarayRef);
 
-      const mantaray = initManifestNode();
+      const mantaray = initManifestNode({
+        obfuscationKey: randomBytes(TOPIC_BYTES_LENGTH) as Bytes<32>,
+      });
       await this.loadMantaray(wrappedMantarayRef, mantaray);
       const histsoryFork = mantaray.getForkAtPath(encodePathToBytes(FILEINFO_HISTORY_PATH));
       const historyEntry = histsoryFork?.node.getEntry;
@@ -227,9 +240,15 @@ export class FileManager {
 
   // End init methods
 
+  // Start getter methods
   getFileInfoList(): FileInfo[] {
     return this.fileInfoList;
   }
+
+  getSharedWithMe(): ShareItem[] {
+    return this.sharedWithMe;
+  }
+  // End getter methods
 
   private async initializeFeed(batchId: string | BatchId, mantaray: MantarayNode): Promise<void> {
     console.log('Initializing wallet and checking for existing feed...');
@@ -263,7 +282,7 @@ export class FileManager {
     const hexManifestReference = manifestReference;
 
     // Create a feed writer and upload the manifest reference
-    const writer = this.bee.makeFeedWriter('sequence', this.ownerFeedTopic, this.wallet.privateKey);
+    const writer = this.bee.makeFeedWriter('sequence', this.ownerFeedTopic, this.signer);
     await writer.upload(batchId, hexManifestReference as Reference); // Explicitly cast to Reference
 
     console.log(`Feed updated with reference: ${hexManifestReference}`);
@@ -575,7 +594,8 @@ export class FileManager {
     currentFileInfo: FileInfo | undefined = undefined,
   ): Promise<ReferenceWithHistory> {
     console.log(`Uploading file: ${file}`);
-    const fileData = readFileSync(file);
+    const filePath = path.resolve(__dirname, file);
+    const fileData = new Uint8Array(readFileSync(filePath));
     const fileName = path.basename(file);
     const contentType = getContentType(file);
 
@@ -907,13 +927,18 @@ export class FileManager {
         reference: mantarayFeedListData.reference,
         historyRef: mantarayFeedListData.historyAddress,
       };
+      console.log('bagoy first init ownerFeedData.reference: ', ownerFeedData.reference);
+      console.log('bagoy first init ownerFeedData.historyRef: ', ownerFeedData.historyRef);
 
       const ownerFeedWriter = this.bee.makeFeedWriter(DEFAULT_FEED_TYPE, this.ownerFeedTopic, this.signer);
       const ownerFeedRawData = await this.bee.uploadData(ownerFeedStamp.batchID, JSON.stringify(ownerFeedData));
       const writeResult = await ownerFeedWriter.upload(ownerFeedStamp.batchID, ownerFeedRawData.reference, {
         index: this.nextOwnerFeedIndex,
       });
+      const checkData = await ownerFeedWriter.download();
+      console.log('bagoy checkData: ', checkData);
 
+      console.log('bagoy first init ownerFeedRawData.reference: ', ownerFeedRawData.reference);
       this.nextOwnerFeedIndex += 1;
       console.log('Owner feed list updated: ', writeResult.reference);
     } catch (error: any) {
@@ -1053,7 +1078,10 @@ export class FileManager {
   public async getFeedData(topic: string, address?: string, index?: number): Promise<FetchFeedUpdateResponse> {
     try {
       const feedReader = this.bee.makeFeedReader(DEFAULT_FEED_TYPE, topic, address || this.wallet.address);
-      return await feedReader.download({ index: numberToFeedIndex(index) });
+      if (index !== undefined) {
+        return await feedReader.download({ index: numberToFeedIndex(index) });
+      }
+      return await feedReader.download();
     } catch (error) {
       if (isNotFoundError(error)) {
         return { feedIndex: -1, feedIndexNext: (0).toString(), reference: SWARM_ZERO_ADDRESS as Reference };
