@@ -5,10 +5,12 @@ import {
   REFERENCE_BYTES_LENGTH,
   REFERENCE_HEX_LENGTH,
   Topic,
+  TOPIC_BYTES_LENGTH,
   TOPIC_HEX_LENGTH,
   Utils,
 } from '@ethersphere/bee-js';
 import { Binary } from 'cafe-utility';
+import { randomBytes } from 'crypto';
 import path from 'path';
 
 import { FileInfo, Index, ReferenceWithHistory, ShareItem, WrappedMantarayFeed } from './types';
@@ -52,7 +54,6 @@ export function isRecord(value: Record<string, string> | string[]): value is Rec
   return typeof value === 'object' && 'key' in value;
 }
 
-// TODO: fix assertions - must have certain properties
 export function assertFileInfo(value: unknown): asserts value is FileInfo {
   if (!isStrictlyObject(value)) {
     throw new TypeError('FileInfo has to be object!');
@@ -68,6 +69,10 @@ export function assertFileInfo(value: unknown): asserts value is FileInfo {
 
   if (fi.historyRef !== undefined) {
     assertReference(fi.historyRef);
+  }
+
+  if (fi.topic !== undefined) {
+    assertTopic(fi.topic);
   }
 
   if (fi.customMetadata !== undefined && !isRecord(fi.customMetadata)) {
@@ -162,7 +167,12 @@ export function encodePathToBytes(pathString: string): Uint8Array {
   return new TextEncoder().encode(pathString);
 }
 
-export function makeBeeRequestOptions(historyRef?: string, publisher?: string, timestamp?: number): BeeRequestOptions {
+export function makeBeeRequestOptions(
+  historyRef?: string,
+  publisher?: string,
+  timestamp?: number,
+  act?: boolean,
+): BeeRequestOptions {
   const options: BeeRequestOptions = {};
   if (historyRef !== undefined) {
     options.headers = { 'swarm-act-history-address': historyRef };
@@ -175,6 +185,9 @@ export function makeBeeRequestOptions(historyRef?: string, publisher?: string, t
   }
   if (timestamp !== undefined) {
     options.headers = { ...options.headers, 'swarm-act-timestamp': timestamp.toString() };
+  }
+  if (act) {
+    options.headers = { ...options.headers, 'swarm-act': 'true' };
   }
 
   return options;
@@ -216,4 +229,8 @@ export function makeNumericIndex(index: Index): number {
 // Determines if the error is about 'Not Found'
 export function isNotFoundError(error: any): boolean {
   return error.stack.includes('404') || error.message.includes('Not Found') || error.message.includes('404');
+}
+
+export function getRandomTopicHex(): Topic {
+  return Utils.bytesToHex(randomBytes(TOPIC_BYTES_LENGTH), TOPIC_HEX_LENGTH);
 }

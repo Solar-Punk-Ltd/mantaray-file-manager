@@ -1,8 +1,9 @@
-import { BatchId, RedundancyLevel, Reference, ReferenceResponse } from '@ethersphere/bee-js';
+import { BatchId, RedundancyLevel, Reference, ReferenceResponse, Topic } from '@ethersphere/bee-js';
 
 export interface FileInfo {
   batchId: string | BatchId;
   eFileRef: string | Reference;
+  topic?: string | Topic;
   historyRef?: string | Reference;
   owner?: string;
   fileName?: string;

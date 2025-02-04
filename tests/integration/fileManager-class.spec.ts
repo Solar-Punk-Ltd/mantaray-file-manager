@@ -15,7 +15,7 @@ import {
   OTHER_BEE_URL,
 } from '../utils';
 
-describe('FileManager instantiation', () => {
+describe('FileManager initialization', () => {
   beforeEach(async () => {
     // const bee = new Bee(BEE_URL);
     // const ownerStamp = (await bee.getAllPostageBatch()).find(async (b) => {
@@ -29,8 +29,6 @@ describe('FileManager instantiation', () => {
 
   it('should create and initialize a new instance', async () => {
     const bee = new Bee(BEE_URL);
-    // const f = async (): Promise<any> => new FileManager(bee, MOCK_PK);
-    // const fileManager = (await f()) as FileManager;
     const fileManager = new FileManager(bee, MOCK_PRIV_KEY);
     try {
       await fileManager.initialize();
@@ -94,7 +92,6 @@ describe('FileManager instantiation', () => {
 
   it('should upload a file and save it on swarm', async () => {
     const expectedFileData = getTestFile('files/test.txt');
-
     const bee = new Bee(BEE_URL);
     await buyStamp(bee, OWNER_FEED_STAMP_LABEL);
     const mockPubKey = (await bee.getNodeAddresses()).publicKey;
@@ -117,7 +114,6 @@ describe('FileManager instantiation', () => {
 
       expect(actualFileData.data.text()).toEqual(expectedFileData);
     }
-
     // re-init fileManager after it goes out of scope to test if the file is saved on the feed
     const fileManager = new FileManager(bee, MOCK_PRIV_KEY);
     await fileManager.initialize();
