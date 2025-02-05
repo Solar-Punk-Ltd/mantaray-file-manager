@@ -1,35 +1,32 @@
-import { Bee, Reference, STAMPS_DEPTH_MAX, Topic, Utils } from '@ethersphere/bee-js';
+import { Bee, Topic } from '@ethersphere/bee-js';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 import { OWNER_FEED_STAMP_LABEL, REFERENCE_LIST_TOPIC, SWARM_ZERO_ADDRESS } from '../../src/constants';
 import { FileManager } from '../../src/fileManager';
 import { FileInfo } from '../../src/types';
-import { encodePathToBytes, makeBeeRequestOptions } from '../../src/utils';
+import { makeBeeRequestOptions } from '../../src/utils';
 import {
   BEE_URL,
   buyStamp,
   getTestFile,
-  initTestMangarayNode,
+  initTestMantarayNode,
   MOCK_PRIV_KEY,
   MOCK_WALLET,
   OTHER_BEE_URL,
+  OTHER_MOCK_PRIV_KEY,
 } from '../utils';
 
 describe('FileManager initialization', () => {
   beforeEach(async () => {
-    // const bee = new Bee(BEE_URL);
-    // const ownerStamp = (await bee.getAllPostageBatch()).find(async (b) => {
-    //   b.label === OWNER_FEED_STAMP_LABEL;
-    // });
-    // if (!ownerStamp) {
-    //   await buyStamp(bee, OWNER_FEED_STAMP_LABEL);
-    // }
+    const bee = new Bee(BEE_URL);
+    await buyStamp(bee, OWNER_FEED_STAMP_LABEL);
+
     jest.resetAllMocks();
   });
 
   it('should create and initialize a new instance', async () => {
-    const bee = new Bee(BEE_URL);
-    const fileManager = new FileManager(bee, MOCK_PRIV_KEY);
+    const bee = new Bee(OTHER_BEE_URL);
+    const fileManager = new FileManager(bee, OTHER_MOCK_PRIV_KEY);
     try {
       await fileManager.initialize();
     } catch (error: any) {
@@ -72,7 +69,6 @@ describe('FileManager initialization', () => {
   it('should throw an error if someone else than the owner tries to read the owner feed', async () => {
     const bee = new Bee(BEE_URL);
     const otherBee = new Bee(OTHER_BEE_URL);
-    await buyStamp(bee, OWNER_FEED_STAMP_LABEL);
     const fileManager = new FileManager(bee, MOCK_PRIV_KEY);
     await fileManager.initialize();
     const mockOtherPubKey = (await otherBee.getNodeAddresses()).publicKey;
@@ -93,7 +89,6 @@ describe('FileManager initialization', () => {
   it('should upload a file and save it on swarm', async () => {
     const expectedFileData = getTestFile('files/test.txt');
     const bee = new Bee(BEE_URL);
-    await buyStamp(bee, OWNER_FEED_STAMP_LABEL);
     const mockPubKey = (await bee.getNodeAddresses()).publicKey;
     const testStampId = await buyStamp(bee, 'testStamp');
     let actualFileInfo: FileInfo;
@@ -101,7 +96,7 @@ describe('FileManager initialization', () => {
       const fileManager = new FileManager(bee, MOCK_PRIV_KEY);
       await fileManager.initialize();
 
-      const testMantaray = initTestMangarayNode();
+      const testMantaray = initTestMantarayNode();
       await fileManager.upload(testStampId, testMantaray, '../tests/files/test.txt', undefined, undefined);
 
       const fileInfoList = fileManager.getFileInfoList();

@@ -13,7 +13,7 @@ import { Binary } from 'cafe-utility';
 import { randomBytes } from 'crypto';
 import path from 'path';
 
-import { FileInfo, Index, ReferenceWithHistory, ShareItem, WrappedMantarayFeed } from './types';
+import { Bytes, FileInfo, Index, ReferenceWithHistory, ShareItem, WrappedMantarayFeed } from './types';
 
 export function getContentType(filePath: string): string {
   const ext = path.extname(filePath).toLowerCase();
@@ -232,5 +232,9 @@ export function isNotFoundError(error: any): boolean {
 }
 
 export function getRandomTopicHex(): Topic {
-  return Utils.bytesToHex(randomBytes(TOPIC_BYTES_LENGTH), TOPIC_HEX_LENGTH);
+  return Utils.bytesToHex(getRandomBytes(TOPIC_BYTES_LENGTH), TOPIC_HEX_LENGTH);
+}
+
+export function getRandomBytes(len: number): Buffer {
+  return randomBytes(len);
 }

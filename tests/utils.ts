@@ -5,7 +5,7 @@ import { Wallet } from 'ethers';
 import { readFileSync } from 'fs';
 import path from 'path';
 
-import { Bytes, FileInfo } from '../src/types';
+import { Bytes } from '../src/types';
 
 export const BEE_URL = 'http://localhost:1633';
 export const OTHER_BEE_URL = 'http://localhost:1733';
@@ -23,13 +23,20 @@ export const MOCK_SIGNER = {
 };
 
 export async function buyStamp(bee: Bee, label?: string): Promise<BatchId> {
+  const ownerStamp = (await bee.getAllPostageBatch()).find(async (b) => {
+    b.label === label;
+  });
+  if (ownerStamp && ownerStamp.usable) {
+    return ownerStamp.batchID;
+  }
+
   return await bee.createPostageBatch(DEFAULT_BATCH_AMOUNT, DEFAULT_BATCH_DEPTH, {
     waitForUsable: true,
     label: label,
   });
 }
 
-export function initTestMangarayNode(): MantarayNode {
+export function initTestMantarayNode(): MantarayNode {
   return initManifestNode({ obfuscationKey: randomBytes(TOPIC_BYTES_LENGTH) as Bytes<32> });
 }
 
